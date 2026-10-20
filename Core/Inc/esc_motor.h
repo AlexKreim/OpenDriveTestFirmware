@@ -42,6 +42,7 @@ void  motor_stop(void);
 void  motor_fault(esc_fault_t f);
 void  motor_clear_fault(void);
 /* Gate-driver test: per phase low side on, then high side on (others off). Needs bus power, motor may be connected. */
+bool  motor_trigger_timing_ok(void);       /* boot check of the hardware ADC trigger (rate and instant) */
 bool  motor_cal_start(void);                /* motor R/L + encoder calibration, runs in the control interrupt */
 int   motor_cal_status(void);               /* 0 = running / not started, 1 = finished ok, -1 = failed */
 bool  motor_cal_result(float *r_phase_ohm, float *l_phase_h, int *enc_dir, float *pp, const char **err);

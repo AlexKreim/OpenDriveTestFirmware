@@ -1,49 +1,127 @@
-# Project context for Claude
+# CLAUDE.md – project context
 
-Custom BLDC ESC: STM32G474RET firmware (STM32CubeIDE project, this repo root = folder with the `.ioc`) and a
-Python/PySide6 PC program in `esc_GUI/`. The full user guide is in the README (setup, commands, parameters, troubleshooting).
+Custom BLDC ESC: firmware for an STM32G474 board (this repo root is the STM32CubeIDE project: `.ioc`, `Core/`, `Drivers/`, ...)
+plus the Python/PySide6 PC program "ESC Control" in `GUI/`. The user guide (setup, commands, parameters, troubleshooting)
+is `README.md` (same file in `GUI/`). Keep both copies identical when you edit it.
 
-## Working rules (from the owner)
-- The code in this repo is the **last known working version**. Change it in small, separate steps and say what each step touches.
-  A previous attempt (auto-tune, adjustable speed filter, automatic re-zero at start, parameter version 6) broke open-loop and
-  low-speed FOC on hardware and was reverted completely. Do not reintroduce these without being asked.
-- The owner tests on hardware; you cannot. Say clearly what was only compiled / simulated.
-- Keep answers short; the owner has a limited token budget. No long test runs unless asked.
-- Firmware defaults should stay the ODrive M8325s values (speed Kp 0.04, Ki 0.2) unless told otherwise.
-- "Write to flash" only works while the motor is stopped (keep it that way).
+---------------------------------------------------------------------------------------------------------------------------
 
-## Hardware
-- STM32G474 @170 MHz, USB CDC console, 3x L6387E gate drivers, low-side shunts 1 mOhm + internal op-amps (PGA x16),
-  AS5047P encoder on SPI3 (FOC uses SPI; the ABI count reads 0, not configured), driver NTC 10k beta 3380, bus cap only 47 uF,
-  low-side FETs BSC123N08NS3G run warm. Pin map: `Core/Src/esc_hw.c` header comment. Scaling: `Core/Inc/esc_config.h`.
-- The hardware ADC trigger (TIM1 CC4 -> injected) does not start on this board; the firmware falls back to a software start in
-  `TIM1_CC_IRQHandler` (center-aligned mode 1: CC4 flag only while counting down -> once per period; never filter on DIR).
+## 1. Working rules (from the owner)
 
-## Firmware (Core/Src, Core/Inc, files esc_*)
-- `esc_motor.c`: 20 kHz control interrupt, state machine, open loop, current sampling, overcurrent (4 samples), FOC glue,
-  late-sample guard (`SAMPLE_MARGIN_CNT`), sum-of-currents spike rejection, interrupt priorities (control 0, USB 3) set at start.
-- `esc_foc.c`: hardware-independent FOC: dq PI current loops, tracking observer (80 Hz) for speed, speed PI, position profile + PID,
-  calibration (R, L, encoder direction, pole pairs). Outer loops use the measured time between ticks.
-- `esc_app.c`: commands, telemetry `T,` (22 fields), watchdog (signed time difference, fixed race), `status` (stop reason,
-  reset cause, ISR time, late/rejected samples), SPI speed unwrapped every 2 ms.
-- `esc_params.c`: parameter table, flash image version 5 (144-byte struct, static asserts). Changing the struct needs a version
-  bump plus GUI `EXPECTED_PARAMS_VERSION` and the test harness.
-- Build with **-O2** (at -O0 the control interrupt is too slow). Linker script FLASH length 508K (last 2 KB = parameters).
-- PC simulation: `bash tests/run_foc_sim.sh` (gcc, PMSM model of the ODrive motor) if the `tests` folder is present.
+- **This repo is the last version that works on hardware.** Make small, separate changes; say exactly what each one touches,
+  and keep the fallback/previous behaviour where possible so a failed change is easy to undo. Commit per change.
+- **You cannot test on hardware; the owner can.** Always state what was only compiled, simulated, or not checked at all.
+  Never claim a hardware result.
+- The owner has a **limited token budget**: short answers, no long test runs or broad refactors unless asked.
+- The owner holds an EE degree: technical explanations are welcome, but keep them concise.
+- Firmware defaults stay the **ODrive M8325s values** (speed Kp 0.04 A/rpm, Ki 0.2 A/(rpm s)) unless told otherwise.
+  Motor-specific values live in GUI presets.
+- "Write to flash" (`save`) only works while the motor is stopped. Keep it that way.
+- Deliver code changes as edits in this repo (no zips). Update README and this file when behaviour changes.
 
-## GUI (esc_GUI)
-- `main.py` (tabs Speed/Torque/Position/Tuning/Motor & Advanced), `link.py` (serial thread, OK/ERR matching, events),
-  `protocol.py` (parameter specs, telemetry fields, `EXPECTED_PARAMS_VERSION = 5`), `presets.py` + `presets/*.json`.
-- Tests without Qt or hardware: `python tests/test_link.py`, `python tests/test_gui_smoke.py` (need gcc; the fake board compiles
-  the real `esc_params.c`, path configured in `tests/fake_esc.py`). One start/stop test is timing-sensitive and can flake.
+## 2. History and what to be careful with
 
-## Motors in use
-- DJI 2212 920KV (Phantom 1): pp 7, R about 120-150 mOhm line-line, L about 40-54 uH line-line (the calibration's L reads ~5x low:
-  set `ll` by hand), speed Kp 0.01 / Ki 0.3 worked well. Low-speed (60 rpm) FOC still sticks/jumps once per electrical turn (open issue).
-- ODrive M8325s 100KV: pp 20, 48 mOhm / 19.8 uH line-line, Kt 0.083.
-- An older "BLDC Schwarz" motor has shorted turns (burnt winding) - do not use for tuning.
+- **Diagnoses made before 2026-10-20 may be confounded.** For a long time a motor ("BLDC Schwarz") with a **shorted phase /
+  burnt winding** was connected. Shorted turns give low/unequal inductance, unbalanced phases, current spikes and torque
+  ripple. Several conclusions from that period (current-sample spikes, the "hardware ADC trigger does not work" finding,
+  the low inductance measured by the calibration) may have been caused by the motor, not the firmware.
+  Re-check on the healthy DJI 2212 motor before building on them.
+- **Reverted, do not reintroduce unless asked:** gain auto-tune (`autotune`), adjustable speed-observer bandwidth parameter
+  (`obsbw`), automatic current re-zero during precharge, parameter version 6, sending the torque set point at start.
+  After these, open loop and low-speed FOC misbehaved on hardware; the cause was never isolated.
+- **Change on 2026-10-20 (untested on hardware):** current sampling moved to the **hardware ADC trigger TIM1 TRGO2 = OC4REF**,
+  see section 4. Ask the owner for `status` ("current trigger: ...") and `diag` output after flashing.
 
-## Lessons from debugging
-- +-100 A single-phase "overcurrents" were bad samples (late software ADC start), not real current.
-- Speed jitter/offset came from skipped periods with a fixed time step (fixed by measuring dt).
-- Random idle stops were the watchdog race (fixed). Use `status` -> last stop / last MCU reset / uptime.
+## 3. Hardware
+
+- MCU STM32G474RET, 170 MHz (HSE 8 MHz, PLL M2 N85 R2), USB FS CDC (virtual COM port), SWD.
+- Gate drivers 3x L6387E, TIM1 complementary outputs, dead time 500 ns. FETs: high side BSC030N08NS5, low side
+  BSC123N08NS3G (weaker, runs warm). Bus capacitance only 47 uF. No hardware overcurrent break.
+- Current sensing: low-side shunts 1 mOhm per phase, internal op-amps OPAMP1/2/3 in PGA x16 (CubeMX), outputs PA2/PA6/PB1
+  -> ADC1_IN3 / ADC2_IN3 / ADC3_IN1. Scaling `CS_V_PER_A = 0.852 * 16 * 0.001`, `CS_SIGN -1`, about 59 mA per ADC count.
+  Idle reading about 1350 counts.
+- Bus voltage PA0 (divider 23), CC6905 bus current (PC2/PB12), phase voltage dividers PA4/PC4/PB11 (PB10 low = on),
+  driver NTC PC1 (10k, beta 3380), motor NTC PC0 (often not fitted, reads -999).
+- AS5047P: SPI3 PC10/11/12, nCS PB9, 14-bit angle (used by FOC, read inside the control interrupt as one pipelined frame).
+  ABI on TIM3 (PC6/PC7, index PD2) reads 0 counts (ABI not configured); only the open-loop speed readout uses it.
+- LED RGB on PC13/14/15 (active low). Full pin map: header comment of `Core/Src/esc_hw.c`.
+
+## 4. Firmware
+
+Files (all `Core/Src/esc_*.c`, `Core/Inc/esc_*.h`; CubeMX code only calls `esc_early_init`, `esc_app_init`, `esc_app_loop`
+in `main.c` and `esc_usb_rx` in `usbd_cdc_if.c`):
+
+| File | Content |
+|---|---|
+| `esc_config.h` | Clock, PWM (20 kHz, center-aligned, ARR 4250), dead time, scaling, limits, all `DEF_*` defaults, `FOC_DMAX` 0.90 |
+| `esc_hw.c` | Register-level setup: TIM1, ADC1/2/3 (injected = phase currents, regular = slow channels), op-amps, SPI3, TIM3, GPIO, AS5047P read/pipeline/reset |
+| `esc_motor.c` | 20 kHz control interrupt, state machine (IDLE, PRECHARGE, ALIGN, RUN, FAULT, CALIB), open loop (V/f, sine or 6-step), current conversion, overcurrent (4 samples > `ilim`), FOC glue, FOC log for `focdump` |
+| `esc_foc.c` | Hardware-independent FOC (also compiled on the PC): Clarke/Park, dq PI with decoupling and anti-windup, SVPWM (min/max injection), encoder tracking (jump gating + relock), 2 kHz outer loops (tracking observer 80 Hz, speed PI, position profile + PID, overspeed), motor calibration state machine |
+| `esc_app.c` | USB text console, commands, telemetry, temperatures/overtemp, host watchdog, `status`/`diag`/`test`, boot sequence (ADC trigger selection, offsets, flash load) |
+| `esc_params.c`, `esc_flash.c` | Parameter table (name, type, range), defaults, flash image in the last 2 KB (0x0807F800), CRC, version 5 |
+
+Key mechanisms:
+- **Current sampling.** ADC1/2/3 injected, one channel each, 12.5-cycle sampling, triggered at OC4REF rising edge
+  (CCR4 = ARR - 100, PWM mode 2, counting up, about 0.6 us before the peak, all low sides on because duty <= 0.9).
+  Boot (`esc_app_init`) tries JEXTSEL **8 = TIM1_TRGO2** (TIM1_CR2.MMS2 = 0111, OC4REF), then **1 = TIM1_CC4**; a source is
+  accepted only if 1024 samples arrive in about 51 ms and >= 95 % of the ADC interrupts start within 600 counts of the peak
+  (`motor_trigger_timing_ok`). Otherwise fallback: TIM1 CC4 interrupt starts the ADCs by software (`TIM1_CC_IRQHandler`;
+  center-aligned mode 1 sets CC4IF only while counting down, so it runs once per period; never filter on DIR).
+  The JEXTSEL numbers come from RM0440 (injected trigger tables, same for ADC1/2 and ADC3/4/5); confirm there if in doubt.
+- Software-fallback protections (keep): late-sample guard (`SAMPLE_MARGIN_CNT`), sum-of-currents spike rejection,
+  control interrupt priority 0 and USB 3 (set at every start).
+- **FOC conventions:** alpha axis = phase A, amplitude-invariant Clarke, d axis = magnet axis. Position/speed in the SENSOR
+  frame; `enc_dir` (+-1, 0 = uncalibrated) maps sensor to electrical angle: theta_e = enc_dir * ((enc * pp) & 0x3FFF) + offset.
+  Positive torque turns towards rising sensor angle. Encoder frame is one period old: Park uses theta + w*Ts, inverse Park
+  theta + 2*w*Ts. Alignment (d current `ialign`) at every FOC start.
+- Outer loops use the measured time between ticks (`foc_in_t.dt` from the DWT cycle counter), so skipped periods do not
+  distort the speed.
+- Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).
+- Host watchdog: GUI sends `ping` every 200 ms and `wd 3000`; uses a signed time difference (an unsigned one caused random
+  stops). `status` shows last stop reason, last MCU reset cause (RCC CSR flags), uptime, current-trigger mode, rejected/late
+  samples, longest control-interrupt time (must be well below 50 us).
+- Build: **-O2** (at -O0 the control interrupt is too slow), hard-float, linker script FLASH LENGTH 508K.
+- **Changing `esc_params_t`** needs a `PARAMS_VERSION` bump, the static asserts in `esc_params.c`, the GUI's
+  `EXPECTED_PARAMS_VERSION` in `GUI/protocol.py`, and a decision about old flash images (saved settings and
+  calibration are lost otherwise). The current loader also accepts version-6 images from the reverted build.
+
+Protocol: newline-terminated text. Replies `OK` / `ERR,<reason>`; `P,<name>,<value>`; `N,<preset>`;
+`V,ESC,<fw>,<paramversion>,<count>`; telemetry `T,` with 22 fields (see `GUI/protocol.py`); `CAL,ok,<R_ll mOhm>,<L_ll uH>,<dir>,<pp>`
+or `CAL,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`.
+Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / float printf).
+
+## 5. GUI (`GUI/`)
+
+- `main.py` (tabs Speed / Torque / Position / Tuning / Motor & Advanced; presets bar; plots; CSV; step-response helper;
+  calibration dialog that stores results in the current preset and saves), `link.py` (serial thread, command/ack matching,
+  events), `protocol.py` (parameter specs: name, label, type, range, step, decimals, unit, tooltip; telemetry fields),
+  `presets.py` + `presets/*.json` (user presets in `%APPDATA%\ESC_Control\presets`), `preset_dialog.py`, `stepmetrics.py`.
+- Torque mode starts at 0 by design (the set point is reset at start/stop).
+- Run: `run.bat` (creates `.venv`). Exe: `build_exe.bat` (PyInstaller).
+
+## 6. Tests (PC only, no hardware)
+
+- FOC simulation: `esc_firmware/tests` from the owner's package (`run_foc_sim.sh`, `foc_sim.c`); expects `../Core` relative
+  to the tests folder, so place it as `tests/` in the repo root. `bash tests/run_foc_sim.sh` (gcc). Models the ODrive motor;
+  checks align, torque, speed, calibration, overspeed, position. `GLITCH=0.05` adds bad encoder frames.
+- GUI: `python GUI/tests/test_link.py`, `python GUI/tests/test_gui_smoke.py` (gcc needed; a fake board compiles the
+  real `Core/Src/esc_params.c`, found automatically or via `ESC_FW_CORE`). Qt is stubbed. One start/stop test can flake on timing.
+- The motor/ADC/interrupt code (`esc_motor.c`, `esc_hw.c`, `esc_app.c`) is not covered by any test; only compile it.
+
+## 7. Motors
+
+| Motor | pp | R line-line | L line-line | Kv | Notes |
+|---|---|---|---|---|---|
+| DJI 2212 920KV (Phantom 1), current test motor | 7 | ~120-150 mOhm | ~40-54 uH (profiler) | 920 | Speed Kp 0.01 / Ki 0.3 worked; low-speed (60 rpm) FOC showed stick-slip once per electrical turn (may relate to current offsets or the older trigger path) |
+| ODrive M8325s 100KV | 20 | 48 mOhm | 19.8 uH | 100 | Kt 0.083, defaults tuned for it |
+| "BLDC Schwarz" | 7 | - | - | - | **Shorted phase, do not use** |
+
+The calibration's inductance (5 kHz voltage dither) read about 5x below the ST profiler value; it was measured on the damaged
+motor, so re-check on the 2212 before trusting or fixing the method.
+
+## 8. Open issues / ideas
+
+1. Verify the hardware ADC trigger on the board (`status`, `diag`); if it works, the software-fallback guards stop mattering.
+2. Re-check low-speed FOC smoothness and the calibration's L on the healthy motor.
+3. ABI encoder count is 0 (AS5047P ABI setting / `ENC_CPR` placeholder).
+4. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.

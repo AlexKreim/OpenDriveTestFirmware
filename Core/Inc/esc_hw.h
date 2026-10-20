@@ -22,6 +22,11 @@ bool hw_inj_collect(uint16_t raw[3]);
 void hw_adc_use_software_trigger(void);
 void hw_inj_sw_start(void);
 bool hw_adc_sw_mode(void);
+#define ADC_TRIG_CC4    1u     /* JEXTSEL: TIM1_CC4 */
+#define ADC_TRIG_TRGO2  8u     /* JEXTSEL: TIM1_TRGO2 */
+void hw_adc_use_hw_trigger(uint32_t jextsel);
+uint32_t hw_adc_trigger_sel(void);
+const char *hw_adc_trigger_name(void);
 
 /* Slow measurements (blocking, a few microseconds each) */
 float hw_vbus_v(void);

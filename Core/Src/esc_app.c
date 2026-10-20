@@ -335,7 +335,7 @@ static void print_diag(void)
                     i + 1, (unsigned long)c, (unsigned)(c & 1u), (unsigned)((c >> 2) & 3u), (unsigned)((c >> 5) & 3u), g, gn[g & 7u], conn);
         }
     }
-    uprintf("trigger mode %s, cal samples %lu, ADC irq enabled %lu pending %lu, boot ADC check %s\r\n", hw_adc_sw_mode() ? "software (CC4 irq)" : "hardware",
+    uprintf("trigger mode %s, cal samples %lu, ADC irq enabled %lu pending %lu, boot ADC check %s\r\n", hw_adc_trigger_name(),
             (unsigned long)motor_cal_count(), (unsigned long)NVIC_GetEnableIRQ(ADC1_2_IRQn),
             (unsigned long)NVIC_GetPendingIRQ(ADC1_2_IRQn), adc_fail ? "FAILED" : "ok");
 }
@@ -375,7 +375,7 @@ static void print_status(void)
     uprintf("state %s, fault %s, Vbus %s V, Ibus %s A\r\n", sn[g_state], fn[g_fault], ff(g_vbus), ff(hw_ibus_a()));
     uprintf("last stop: %s, last MCU reset: %s, uptime %lu s\r\n", stop_reason, reset_cause, (unsigned long)(HAL_GetTick() / 1000u));
     if (g_oc_last_ph >= 0) uprintf("last sample above the overcurrent level: phase %c, %s A (raw %u)\r\n", 'A' + g_oc_last_ph, ff(g_oc_last_a), (unsigned)g_oc_last_raw);
-    uprintf("current trigger: %s, rejected current samples %lu, late (skipped) samples %lu\r\n", hw_adc_sw_mode() ? "software (TIM1 CC4 interrupt)" : "hardware (ADC)", (unsigned long)g_cs_rejected, (unsigned long)g_cs_late);
+    uprintf("current trigger: %s, rejected current samples %lu, late (skipped) samples %lu\r\n", hw_adc_trigger_name(), (unsigned long)g_cs_rejected, (unsigned long)g_cs_late);
     uprintf("control interrupt: longest run %lu cycles = %s us (limit 50 us)\r\n", (unsigned long)g_isr_cycles_max, ff((float)g_isr_cycles_max / ((float)SystemCoreClock * 1e-6f)));
     uprintf("mode %s, |I| %s A, Id %s, Iq %s A, enc_dir %d\r\n", mn[g_mode & 3], ff(g_imag), ff(g_id), ff(g_iq), (int)g_par.enc_dir);
     if (ot_src) uprintf("last overtemperature fault: %s at %s C\r\n", ot_src == 1 ? "driver" : "motor", ff(ot_val));
@@ -666,8 +666,15 @@ void esc_app_init(void)
     hw_led_set(0);
     g_vbus = hw_vbus_v();
     params_derive(&g_par, g_vbus, &g_eff);
-    bool cal_ok = motor_calibrate_offsets();
-    if (!cal_ok) {                                  /* hardware trigger missing: fall back to the TIM1 CC4 interrupt */
+    /* current sampling: hardware trigger from TIM1 (TRGO2 = OC4REF first, then CC4). Accepted only if the samples arrive once
+     * per PWM period and right at the PWM peak; otherwise fall back to the software start from the TIM1 CC4 interrupt. */
+    static const uint32_t trig[] = { ADC_TRIG_TRGO2, ADC_TRIG_CC4 };
+    bool cal_ok = false;
+    for (unsigned i = 0; i < sizeof(trig) / sizeof(trig[0]) && !cal_ok; i++) {
+        hw_adc_use_hw_trigger(trig[i]);
+        cal_ok = motor_calibrate_offsets() && motor_trigger_timing_ok();
+    }
+    if (!cal_ok) {
         hw_adc_use_software_trigger();
         cal_ok = motor_calibrate_offsets();
     }

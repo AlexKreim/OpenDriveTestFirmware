@@ -338,7 +338,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("Control:", crow)
         rpm_row = QtWidgets.QHBoxLayout()
         self.rpm_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.rpm_slider.setRange(0, 10000)
+        self.rpm_slider.setRange(0, 1500)
         rpm_row.addWidget(self.rpm_slider, 1)
         rpm_spin = self._make_param_widget(P.PARAM_SPEC_BY_NAME["rpm"])
         rpm_spin.setMinimumWidth(110)

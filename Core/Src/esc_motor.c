@@ -40,6 +40,8 @@ static volatile bool enc_cached_ok;
 
 static float offs[3] = {2048.0f, 2048.0f, 2048.0f};
 static volatile uint32_t cal_n = CAL_N;          /* CAL_N = not calibrating */
+volatile uint32_t g_trig_win_n;     /* boot check: interrupts that came right around the PWM peak (correct trigger source) */
+static uint32_t   cal_ms;
 static volatile uint32_t cal_acc[3];
 static volatile uint16_t cal_min[3], cal_max[3];
 
@@ -68,14 +70,23 @@ bool motor_calibrate_offsets(void)
     if (g_state != ST_IDLE) return false;
     cal_acc[0] = cal_acc[1] = cal_acc[2] = 0;
     for (int i = 0; i < 3; i++) { cal_min[i] = 0xFFFFu; cal_max[i] = 0u; }
+    g_trig_win_n = 0;
     cal_n = 0;
     uint32_t t0 = HAL_GetTick();
     while (cal_n < CAL_N) {
         if (HAL_GetTick() - t0 > 200) return false;   /* no ADC triggers: something is wrong with TIM1/ADC */
     }
+    cal_ms = HAL_GetTick() - t0;
     for (int i = 0; i < 3; i++) offs[i] = (float)cal_acc[i] / (float)CAL_N;
     g_cal_done = true;
     return true;
+}
+
+/* after motor_calibrate_offsets() on a hardware trigger: did the samples come once per PWM period, at the right instant? */
+bool motor_trigger_timing_ok(void)
+{
+    uint32_t expect_ms = (CAL_N * 1000u) / PWM_FREQ_HZ;                 /* 51 ms */
+    return cal_ms + 10u >= expect_ms && cal_ms <= expect_ms + 15u && g_trig_win_n >= (CAL_N * 95u) / 100u;
 }
 
 /* ------------------------------------------------------------------ */
@@ -330,6 +341,9 @@ volatile uint32_t g_isr_cycles_max;
 
 void ADC1_2_IRQHandler(void)
 {
+    /* hardware trigger at CNT = ARR - 100 (counting up), conversion ~0.6 us, so the interrupt starts within a few hundred
+     * counts around the peak. A trigger from a wrong source would come at random counter values. */
+    if (cal_n < CAL_N && TIM1->CNT > PWM_ARR - 600u) g_trig_win_n++;
     uint32_t t0 = DWT->CYCCNT;
     control_isr();
     uint32_t dt = DWT->CYCCNT - t0;

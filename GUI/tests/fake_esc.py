@@ -11,7 +11,17 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FW_CORE = os.environ.get("ESC_FW_CORE", os.path.normpath(os.path.join(HERE, "..", "..", "esc_firmware", "Core")))
+def _find_core():
+    """Firmware Core folder: $ESC_FW_CORE, else the CubeIDE project root (esc_GUI inside it), else a sibling esc_firmware folder."""
+    if os.environ.get("ESC_FW_CORE"):
+        return os.environ["ESC_FW_CORE"]
+    for c in (os.path.join(HERE, "..", "..", "Core"), os.path.join(HERE, "..", "..", "esc_firmware", "Core")):
+        if os.path.isfile(os.path.join(c, "Src", "esc_params.c")):
+            return os.path.normpath(c)
+    return os.path.normpath(os.path.join(HERE, "..", "..", "Core"))
+
+
+FW_CORE = _find_core()
 HARNESS = os.path.join(tempfile.gettempdir(), "esc_params_harness")
 
 

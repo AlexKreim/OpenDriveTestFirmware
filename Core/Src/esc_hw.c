@@ -115,12 +115,27 @@ static void adc_calibrate_enable(ADC_TypeDef *a)
     while (!(a->ISR & ADC_ISR_ADRDY) && --t) { }
 }
 
+/* Injected trigger source (JEXTSEL). RM0440, external triggers for injected channels (same numbers on ADC1/2 and ADC3/4/5):
+ *   1 = TIM1_CC4, 8 = TIM1_TRGO2. TRGO2 is set to OC4REF (TIM1_CR2.MMS2 = 0111), the route ST's motor-control library uses.
+ * The boot check tries TRGO2 first, then CC4, and only then falls back to the software start (see esc_app.c). */
+static uint32_t inj_sel = ADC_TRIG_TRGO2;
+
 static void adc_inj_arm(ADC_TypeDef *a, uint32_t ch)
 {
     adc_smp(a, ch, 2u);                       /* 12.5 cycles, op-amp output is low impedance */
-    /* JEXTSEL = 1: tim1_cc4, JEXTEN = 1: rising edge (please verify in RM0440 table for your device) */
-    a->JSQR = (ch << ADC_JSQR_JSQ1_Pos) | (1u << ADC_JSQR_JEXTEN_Pos) | (1u << ADC_JSQR_JEXTSEL_Pos);
+    /* JEXTEN = 1: rising edge (OC4REF rises at CNT = CCR4 while counting up, just before the PWM peak) */
+    a->JSQR = (ch << ADC_JSQR_JSQ1_Pos) | (1u << ADC_JSQR_JEXTEN_Pos) | (inj_sel << ADC_JSQR_JEXTSEL_Pos);
     a->CR |= ADC_CR_JADSTART;
+}
+
+static void adc_inj_stop(ADC_TypeDef *a)
+{
+    if (a->CR & ADC_CR_JADSTART) {
+        a->CR |= ADC_CR_JADSTP;
+        uint32_t t = 100000;
+        while ((a->CR & ADC_CR_JADSTP) && --t) { }
+    }
+    a->ISR = ADC_ISR_JEOS | ADC_ISR_JEOC;
 }
 
 static uint16_t adc_read(ADC_TypeDef *a, uint8_t ch)
@@ -189,7 +204,7 @@ void hw_init(void)
     TIM1->ARR  = PWM_ARR;
     TIM1->RCR  = 0;
     TIM1->CR1  = TIM_CR1_CMS_0 | TIM_CR1_ARPE;                 /* center-aligned mode 1 */
-    TIM1->CR2  = 0;                                            /* all idle states low */
+    TIM1->CR2  = (7u << TIM_CR2_MMS2_Pos);                     /* TRGO2 = OC4REF (ADC trigger); all idle states low */
     TIM1->CCMR1 = (6u << TIM_CCMR1_OC1M_Pos) | TIM_CCMR1_OC1PE |
                   (6u << TIM_CCMR1_OC2M_Pos) | TIM_CCMR1_OC2PE;   /* PWM mode 1 */
     TIM1->CCMR2 = (6u << TIM_CCMR2_OC3M_Pos) | TIM_CCMR2_OC3PE |
@@ -245,6 +260,32 @@ void hw_init(void)
 
 /* ------------------------------------------------------------------ */
 bool hw_adc_sw_mode(void) { return sw_trig; }
+uint32_t hw_adc_trigger_sel(void) { return inj_sel; }
+const char *hw_adc_trigger_name(void)
+{
+    if (sw_trig) return "software (TIM1 CC4 interrupt)";
+    return (inj_sel == ADC_TRIG_TRGO2) ? "hardware (TIM1 TRGO2 = OC4REF)" : (inj_sel == ADC_TRIG_CC4) ? "hardware (TIM1 CC4)" : "hardware (other)";
+}
+
+/* (Re-)arm the three injected ADCs on a hardware trigger source; the ADC1 end-of-sequence interrupt runs the control step */
+void hw_adc_use_hw_trigger(uint32_t jextsel)
+{
+    ADC1->IER &= ~ADC_IER_JEOSIE;
+    NVIC_DisableIRQ(ADC1_2_IRQn);
+    TIM1->DIER &= ~TIM_DIER_CC4IE;
+    NVIC_DisableIRQ(TIM1_CC_IRQn);
+    sw_trig = false;
+    adc_inj_stop(ADC1); adc_inj_stop(ADC2); adc_inj_stop(ADC3);
+    inj_sel = jextsel;
+    adc_inj_arm(ADC1, 3);    /* PA2  OPAMP1 out, phase A */
+    adc_inj_arm(ADC2, 3);    /* PA6  OPAMP2 out, phase B */
+    adc_inj_arm(ADC3, 1);    /* PB1  OPAMP3 out, phase C */
+    ADC1->ISR = ADC_ISR_JEOS | ADC_ISR_JEOC;
+    ADC1->IER |= ADC_IER_JEOSIE;
+    NVIC_ClearPendingIRQ(ADC1_2_IRQn);
+    NVIC_SetPriority(ADC1_2_IRQn, 1);
+    NVIC_EnableIRQ(ADC1_2_IRQn);
+}
 
 void hw_adc_use_software_trigger(void)
 {
