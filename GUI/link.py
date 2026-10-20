@@ -24,6 +24,7 @@ class EscLink:
          ("calibration", dict)          result of "calibrate": {ok, r_ll_mohm, l_ll_uh, enc_dir, pp} or {ok False, reason}
          ("scope_state", state, n)      reply to "scope state" (idle / armed / capturing / done, samples so far)
          ("scope", dict)                complete "scope dump": {dt (s per sample), rows [[rpm, rpm_sp, iq, iq_ref, id, vq, pos], ...]}
+         ("faultlog", dict)             complete "faultlog": {boot, flash, entries [dict per L line]}
          ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
@@ -40,6 +41,7 @@ class EscLink:
         self._plock = threading.Lock()
         self._params = {}
         self._scope = None                       # (dt, rows) while a scope dump arrives
+        self._flog = None                        # fault log while its lines arrive
 
     @staticmethod
     def _default_factory(port):
@@ -143,6 +145,22 @@ class EscLink:
             return
         if line.startswith("N,"):
             self._params["_name"] = line[2:].strip()
+            return
+        if line.startswith("L,"):
+            f = line.split(",")
+            if f[1] == "count" and len(f) >= 3:
+                self._flog = {"count": int(f[2]), "boot": int(f[4]) if len(f) >= 5 else 0,
+                              "flash": f[6] if len(f) >= 7 else "?", "entries": []}
+            elif self._flog is not None and len(f) >= 16:
+                keys = ("i", "boot", "uptime_ms", "kind", "what", "state", "mode", "vbus", "ia", "ib", "ic", "imag", "rpm", "iq_ref", "oc_a")
+                e = dict(zip(keys, f[1:16]))
+                self._flog["entries"].append(e)
+            else:
+                self.events.put(("log", line))
+                return
+            if self._flog is not None and len(self._flog["entries"]) >= self._flog["count"]:
+                self.events.put(("faultlog", self._flog))
+                self._flog = None
             return
         if line == "OK" or line.startswith("ERR,"):
             cmd = self._pop_pending()

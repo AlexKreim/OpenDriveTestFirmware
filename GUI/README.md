@@ -305,11 +305,13 @@ Typical values that worked on the prototype:
 
 `clear` resets a fault. The GUI shows faults in plain words.
 
-**Fault log** (`faultlog`, button *Fault log* on the Motor & Advanced tab): the last 8 faults, host-watchdog stops and abnormal MCU
+**Fault log** (`faultlog`, panel *Fault log* on the Motor & Advanced tab with Refresh / Clear): the last 8 faults, host-watchdog stops and abnormal MCU
 resets (watchdog, software/HardFault, low-power), oldest first, with boot number, uptime, state, mode, bus voltage, phase currents,
 |I|, speed, Iq reference and the last sample above the overcurrent level. Lines `L,<i>,<boot>,<uptime ms>,<kind>,<what>,<state>,
 <mode>,<vbus>,<ia>,<ib>,<ic>,<imag>,<rpm>,<iq_ref>,<oc_a>`. It is written to its own flash page once the motor is stopped, so it
 survives a reset or power cycle (a brown-out itself cannot be logged; see *last MCU reset* in `status`). `faultlog clear` empties it.
+The header `L,count,<n>,boot,<b>,flash,<none|ok|fail|pending>` gives the number of entries, the number of this power-on
+(entries with the same boot number come from the same power-on) and the result of the last flash write in this power-on.
 
 **Host watchdog**: the GUI pings the board every 200 ms and sets `wd 3000`. If nothing arrives for 3 s the motor is stopped and
 `INFO: motor stopped by the host watchdog` is printed. Closing the GUI or disconnecting sends STOP.

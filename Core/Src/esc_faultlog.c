@@ -23,6 +23,7 @@ static flog_page_t log_ram;
 static uint16_t    boot_no;
 static volatile bool dirty;
 static uint32_t    dirty_ms;
+static int8_t      wr_res;                 /* 0 none this boot, 1 ok, -1 failed */
 
 static void add(const flog_entry_t *x)
 {
@@ -133,7 +134,13 @@ void flog_task(bool motor_running)
 {
     /* only while stopped (like 'save'), and a moment after the event so the state has settled */
     if (!dirty || motor_running || (HAL_GetTick() - dirty_ms) < 200u) return;
-    (void)write_page();
+    wr_res = write_page() ? 1 : -1;
+}
+
+const char *flog_flash_state(void)
+{
+    if (dirty) return "pending";
+    return wr_res > 0 ? "ok" : (wr_res < 0 ? "fail" : "none");
 }
 
 bool flog_clear(void)
@@ -143,5 +150,7 @@ bool flog_clear(void)
     log_ram.n = 0;
     memset(log_ram.e, 0, sizeof(log_ram.e));
     if (pm == 0u) __enable_irq();
-    return write_page();
+    bool ok = write_page();
+    wr_res = ok ? 1 : -1;
+    return ok;
 }

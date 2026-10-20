@@ -660,7 +660,7 @@ static void handle_line(char *line)
         static const char *rn[] = {"?", "independent watchdog", "window watchdog", "software reset (HardFault?)", "low-power reset"};
         static const char *sn[] = {"IDLE", "PRECHARGE", "ALIGN", "RUN", "FAULT", "CALIB"};
         int n = flog_count();
-        uprintf("L,count,%d,boot,%u\r\n", n, (unsigned)flog_boot());
+        uprintf("L,count,%d,boot,%u,flash,%s\r\n", n, (unsigned)flog_boot(), flog_flash_state());
         for (int i = 0; i < n; i++) {
             flog_entry_t e;
             if (!flog_get(i, &e)) break;

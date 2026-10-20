@@ -726,6 +726,23 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.btn_raw)
         gl.addLayout(row)
         lay.addWidget(g)
+        g = QtWidgets.QGroupBox("Fault log (kept in flash)")
+        gl = QtWidgets.QVBoxLayout(g)
+        row = QtWidgets.QHBoxLayout()
+        b = QtWidgets.QPushButton("Refresh")
+        b.clicked.connect(lambda _=False: self.link.send("faultlog") if self.connected() else None)
+        row.addWidget(b)
+        self.btn_flog_clear = QtWidgets.QPushButton("Clear log")
+        self.btn_flog_clear.clicked.connect(lambda _=False: self.on_faultlog_clear())
+        row.addWidget(self.btn_flog_clear)
+        row.addStretch(1)
+        gl.addLayout(row)
+        self.flog_view = QtWidgets.QPlainTextEdit()
+        self.flog_view.setReadOnly(True)
+        self.flog_view.setMinimumHeight(160)
+        self.flog_view.setPlainText("Press Refresh.")
+        gl.addWidget(self.flog_view)
+        lay.addWidget(g)
         g = QtWidgets.QGroupBox("Diagnostics")
         row = QtWidgets.QHBoxLayout(g)
         for title, cmd, tip in (("Status", "status", "State, last stop reason, last MCU reset, current trigger, interrupt time."),
@@ -1389,6 +1406,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._store_preset(d, replace=base if base.get("_user") else None)
         return name
 
+    # ------------------------------------------------------------------ fault log
+    def on_faultlog(self, d):
+        flash = {"ok": "written to flash", "none": "nothing written since power-on", "pending": "waiting to be written (motor running)",
+                 "fail": "LAST FLASH WRITE FAILED"}.get(d["flash"], d["flash"])
+        lines = ["%d entr%s, this is boot #%d, %s." % (d["count"], "y" if d["count"] == 1 else "ies", d["boot"], flash),
+                 "Newest last. Same boot number = same power-on; time = since that power-on.", ""]
+        for e in d["entries"]:
+            try:
+                t = float(e["uptime_ms"]) / 1000.0
+                mode = P.MODE_NAMES[int(e["mode"])] if hasattr(P, "MODE_NAMES") and int(e["mode"]) < len(P.MODE_NAMES) else e["mode"]
+                lines.append("boot %s, t = %.1f s: %s (%s) in %s, mode %s" % (e["boot"], t, e["what"], e["kind"], e["state"], mode))
+                if e["kind"] != "reset":
+                    lines.append("    Vbus %s V, Ia/Ib/Ic %s / %s / %s A, |I| %s A, speed %s rpm, Iq ref %s A, last OC sample %s A"
+                                 % (e["vbus"], e["ia"], e["ib"], e["ic"], e["imag"], e["rpm"], e["iq_ref"], e["oc_a"]))
+            except (KeyError, ValueError):
+                lines.append(str(e))
+        self.flog_view.setPlainText("\n".join(lines))
+
+    def on_faultlog_clear(self):
+        if not self.connected() or self.running():
+            return
+        q = QtWidgets.QMessageBox.question(self, APP_TITLE, "Erase the fault log on the board?")
+        if q == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.link.send("faultlog clear")
+            self.link.send("faultlog")
+
     # ------------------------------------------------------------------ scope
     def on_scope_arm(self):
         if not self.connected():
@@ -1569,6 +1612,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_calibration(ev[1])
             elif kind == "tune":
                 self.on_tune_result(ev[1])
+            elif kind == "faultlog":
+                self.on_faultlog(ev[1])
             elif kind == "scope_state":
                 self.on_scope_state(ev[1], ev[2])
             elif kind == "scope":

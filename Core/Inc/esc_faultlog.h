@@ -31,5 +31,6 @@ int      flog_count(void);
 bool     flog_get(int i, flog_entry_t *e);   /* 0 = oldest */
 uint16_t flog_boot(void);                    /* number of this boot */
 bool     flog_clear(void);                   /* erase RAM and flash copy (motor stopped) */
+const char *flog_flash_state(void);         /* "none" (nothing written this boot), "ok", "fail" (last write), "pending" */
 
 #endif
