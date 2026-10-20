@@ -26,7 +26,10 @@ is `README.md` (same file in `GUI/`). Keep both copies identical when you edit i
   ripple. Several conclusions from that period (current-sample spikes, the "hardware ADC trigger does not work" finding,
   the low inductance measured by the calibration) may have been caused by the motor, not the firmware.
   Re-check on the healthy DJI 2212 motor before building on them.
-- **Reverted, do not reintroduce unless asked:** gain auto-tune (`autotune`), adjustable speed-observer bandwidth parameter
+- **Gain auto-tune re-implemented 2026-10-20 (untested on hardware):** `tune [bw]`, `foc_tune_*` in `esc_foc.c`, isolated:
+  a torque-mode FOC run whose torque command comes from `foc_tune_step` (one-shot `tune_arm` -> `tune_request` in `esc_motor.c`,
+  cleared on start/stop/fault/finish). No parameter struct change; writes only spdkp/spdki/poskp in RAM.
+- **Reverted, do not reintroduce unless asked:** the first gain auto-tune (`autotune`), adjustable speed-observer bandwidth parameter
   (`obsbw`), automatic current re-zero during precharge, parameter version 6, sending the torque set point at start.
   After these, open loop and low-speed FOC misbehaved on hardware; the cause was never isolated.
 - **Change on 2026-10-20 (untested on hardware):** current sampling moved to the **hardware ADC trigger TIM1 TRGO2 = OC4REF**,
@@ -87,7 +90,7 @@ Key mechanisms:
 
 Protocol: newline-terminated text. Replies `OK` / `ERR,<reason>`; `P,<name>,<value>`; `N,<preset>`;
 `V,ESC,<fw>,<paramversion>,<count>`; telemetry `T,` with 22 fields (see `GUI/protocol.py`); `CAL,ok,<R_ll mOhm>,<L_ll uH>,<dir>,<pp>`
-or `CAL,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`.
+or `CAL,fail,<reason>`; `TUNE,ok,<J gcm2>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`.
 Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / float printf).
 
 ## 5. GUI (`GUI/`)
@@ -103,7 +106,7 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
 
 - FOC simulation: `esc_firmware/tests` from the owner's package (`run_foc_sim.sh`, `foc_sim.c`); expects `../Core` relative
   to the tests folder, so place it as `tests/` in the repo root. `bash tests/run_foc_sim.sh` (gcc). Models the ODrive motor;
-  checks align, torque, speed, calibration, overspeed, position. `GLITCH=0.05` adds bad encoder frames.
+  checks align, torque, speed, calibration, overspeed, position, auto-tune. `GLITCH=0.05` adds bad encoder frames.
 - GUI: `python GUI/tests/test_link.py`, `python GUI/tests/test_gui_smoke.py` (gcc needed; a fake board compiles the
   real `Core/Src/esc_params.c`, found automatically or via `ESC_FW_CORE`). Qt is stubbed. One start/stop test can flake on timing.
 - The motor/ADC/interrupt code (`esc_motor.c`, `esc_hw.c`, `esc_app.c`) is not covered by any test; only compile it.

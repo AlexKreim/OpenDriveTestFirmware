@@ -98,4 +98,29 @@ void foc_cal_begin(foc_cal_t *c, const foc_in_t *in);
 /* 0 = running, 1 = finished (results valid), -1 = failed (c->err) */
 int  foc_cal_step(foc_cal_t *c, const foc_in_t *in, const esc_params_t *p);
 
+/* ---------- speed / position gain auto-tune ----------
+ * Runs on top of an ordinary torque-mode FOC run (foc_step is not changed): it only produces the torque command.
+ * After the alignment: +I until rpm_tgt, then -I down to 10 % of rpm_tgt, then 0. The speed is fitted with a straight line
+ * between 20 % and 80 % of rpm_tgt in both phases: J = 2 Kt I / (a1 - a2), friction torque Tf = -J (a1 + a2) / 2. */
+typedef struct {
+    int   step;
+    float i_tq, rpm_tgt, sgn;          /* test current (A), target speed (rpm), direction (+1 / -1, from 'dir') */
+    float t;                           /* time in the current step, s */
+    float sx, sy, sxx, sxy;            /* least-squares sums: x = t, y = rpm */
+    uint32_t n;
+    uint8_t  last_outer;
+    float a1, a2;                      /* fitted acceleration / deceleration, rpm/s (in the test direction) */
+    float tq;                          /* torque command for the next step, A */
+    /* results */
+    float j_kgm2, tf_nm, kt;
+    const char *err;
+} foc_tune_t;
+
+void  foc_tune_begin(foc_tune_t *t, const esc_params_t *p, float vbus);
+/* call after every foc_step of the torque-mode run; dt = s since the previous call. 0 = running, 1 = done, -1 = failed (t->err).
+ * t->tq is the torque command (A, positive = towards rising sensor angle) for the next foc_step. */
+int   foc_tune_step(foc_tune_t *t, const foc_t *f, float dt);
+/* gains from the identified inertia for a speed-loop bandwidth bw_hz: spdkp = J w / Kt (A/rpm), spdki = spdkp w / 4, poskp = w / 24 */
+void  foc_tune_gains(const foc_tune_t *t, float bw_hz, float *spd_kp, float *spd_ki, float *pos_kp);
+
 #endif

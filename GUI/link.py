@@ -11,7 +11,7 @@ try:
 except ImportError:          # the GUI shows a clear message; tests inject their own serial factory
     serial = None
 
-REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate"}
+REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune"}
 PENDING_TIMEOUT_S = 2.0
 
 
@@ -22,6 +22,7 @@ class EscLink:
          ("ack", cmd, ok, message)      reply to a command ("OK" or "ERR,reason"; ok None = no reply in time)
          ("version", dict)              reply to "ver"
          ("calibration", dict)          result of "calibrate": {ok, r_ll_mohm, l_ll_uh, enc_dir, pp} or {ok False, reason}
+         ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
     """
@@ -156,6 +157,21 @@ class EscLink:
                 try:
                     self.events.put(("calibration", {"ok": True, "r_ll_mohm": float(f[2]), "l_ll_uh": float(f[3]),
                                                      "enc_dir": int(f[4]), "pp": float(f[5])}))
+                    return
+                except ValueError:
+                    pass
+            self.events.put(("log", line))
+            return
+        if line.startswith("TUNE,"):
+            f = line.split(",")
+            if len(f) >= 3 and f[1] == "fail":
+                self.events.put(("tune", {"ok": False, "reason": f[2]}))
+                return
+            if len(f) >= 8 and f[1] == "ok":
+                try:
+                    v = [float(x) for x in f[2:8]]
+                    self.events.put(("tune", {"ok": True, "j_gcm2": v[0], "tf_mnm": v[1], "spdkp": v[2], "spdki": v[3],
+                                              "poskp": v[4], "bw": v[5]}))
                     return
                 except ValueError:
                     pass

@@ -416,6 +416,42 @@ static void cal_task(void)
     else    uprintf("CAL,fail,%s\r\n", "range");
 }
 
+/* gain auto-tune: result -> spdkp / spdki / poskp in RAM ('save' or the GUI stores them) */
+static bool  tune_active;
+static float tune_bw = 5.0f;
+
+/* 6 decimals (ff has 3, too few for spdkp) */
+static const char *ff6(float v)
+{
+    static char b[4][24];
+    static uint8_t k;
+    char *o = b[k++ % 4u];
+    long m = (long)(v * 1.0e6f + (v < 0 ? -0.5f : 0.5f));
+    const char *sg = (m < 0) ? "-" : "";
+    if (m < 0) m = -m;
+    snprintf(o, 24, "%s%ld.%06ld", sg, m / 1000000L, m % 1000000L);
+    return o;
+}
+
+static void tune_task(void)
+{
+    if (!tune_active) return;
+    int st = motor_tune_status();
+    if (st == 0) {
+        if (g_state == ST_IDLE || g_state == ST_FAULT) { tune_active = false; uprintf("TUNE,fail,%s\r\n", g_state == ST_FAULT ? "fault" : "aborted"); }
+        return;
+    }
+    tune_active = false;
+    float j, tf, kp, ki, pkp;
+    const char *err = NULL;
+    if (!motor_tune_result(tune_bw, &j, &tf, &kp, &ki, &pkp, &err)) { uprintf("TUNE,fail,%s\r\n", err ? err : "unknown"); return; }
+    bool ok = params_set(&g_par, "spdkp", kp) && params_set(&g_par, "spdki", ki) && params_set(&g_par, "poskp", pkp);
+    params_derive(&g_par, g_vbus, &g_eff);
+    /* J in g cm^2 (1e-7 kg m^2), friction in mNm */
+    if (ok) uprintf("TUNE,ok,%s,%s,%s,%s,%s,%s\r\n", ff(j * 1.0e7f), ff(tf * 1000.0f), ff6(kp), ff6(ki), ff6(pkp), ff(tune_bw));
+    else    uprintf("TUNE,fail,range\r\n");
+}
+
 static void handle_line(char *line)
 {
     char *sv;
@@ -426,7 +462,7 @@ static void handle_line(char *line)
 
     if (!strcmp(cmd, "help")) {
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n"
-                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | focdump\r\n"
+                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump\r\n"
                 "set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
@@ -559,6 +595,21 @@ static void handle_line(char *line)
         if (!why && !motor_cal_start())                        why = "refused";
         if (why) { reply_err(why); return; }
         cal_active = true;
+        reply_ok();
+    } else if (!strcmp(cmd, "tune")) {
+        /* tune [bw_hz]: torque pulse test, sets spdkp / spdki / poskp for a speed-loop bandwidth of bw_hz (default 5 Hz) */
+        float bw = a1 ? strtof(a1, NULL) : 5.0f;
+        const char *why = NULL;
+        if (!(bw >= 1.0f && bw <= 20.0f))                         why = "range";
+        else if (g_state == ST_FAULT)                             why = "fault";
+        else if (g_state != ST_IDLE)                              why = "not_idle";
+        else if (!g_cal_done)                                     why = "no_cal";
+        else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)      why = "bus_voltage";
+        else if (g_par.enc_dir == 0)                              why = "no_enc_cal";
+        if (!why && !motor_tune_start())                          why = "refused";
+        if (why) { reply_err(why); return; }
+        tune_bw = bw;
+        tune_active = true;
         reply_ok();
     } else if (!strcmp(cmd, "focdump")) {
         /* the last 5 ms of FOC data before an overcurrent / encoder / overspeed fault (20 kHz samples) */
@@ -693,5 +744,6 @@ void esc_app_loop(void)
     spi_speed_task();
     stream_task();
     cal_task();
+    tune_task();
     led_task();
 }

@@ -384,3 +384,96 @@ int foc_cal_step(foc_cal_t *c, const foc_in_t *in, const esc_params_t *p)
         return 1;
     }
 }
+
+/* ================================================================== speed / position gain auto-tune */
+enum { TU_WAIT = 0, TU_ACC, TU_DEC, TU_DONE };
+
+#define TU_TIMEOUT_S  4.0f
+#define TU_RPM_CAP    1500.0f
+
+void foc_tune_begin(foc_tune_t *t, const esc_params_t *p, float vbus)
+{
+    memset(t, 0, sizeof(*t));
+    float imax = fminf(p->i_max, 0.9f * p->ilim);
+    t->i_tq = 0.5f * imax;
+    t->kt = 8.27f / fmaxf(p->kv, 1.0f);
+    t->sgn = (p->dir < 0) ? -1.0f : 1.0f;
+    /* half the speed limit, at most 1500 rpm, and the back-EMF at most 40 % of the bus voltage */
+    t->rpm_tgt = fminf(fminf(TU_RPM_CAP, 0.5f * p->rpm_max), 0.4f * p->kv * vbus);
+    if (t->rpm_tgt < 100.0f) t->err = "rpm_range";
+    else if (t->i_tq < 0.05f) t->err = "current_range";
+}
+
+static void tune_fit_reset(foc_tune_t *t) { t->sx = t->sy = t->sxx = t->sxy = 0.0f; t->n = 0; t->t = 0.0f; }
+
+static void tune_fit_add(foc_tune_t *t, float x, float y)
+{
+    t->sx += x; t->sy += y; t->sxx += x * x; t->sxy += x * y; t->n++;
+}
+
+static bool tune_fit_slope(const foc_tune_t *t, float *a)
+{
+    float n = (float)t->n;
+    float den = n * t->sxx - t->sx * t->sx;
+    if (t->n < 20u || den <= 0.0f) return false;
+    *a = (n * t->sxy - t->sx * t->sy) / den;
+    return true;
+}
+
+static int tune_fail(foc_tune_t *t, const char *why) { t->err = why; t->tq = 0.0f; t->step = TU_DONE; return -1; }
+
+int foc_tune_step(foc_tune_t *t, const foc_t *f, float dt)
+{
+    if (t->err) return tune_fail(t, t->err);
+    if (t->step == TU_DONE) { t->tq = 0.0f; return 1; }
+    if (f->phase != FP_RUN) { t->tq = 0.0f; return 0; }               /* alignment of the normal FOC start */
+    t->t += (dt > 0.0f) ? dt : TS;
+    bool outer = (f->outer_cnt == 0u);                                /* the speed estimate was just updated (2 kHz) */
+    float v = t->sgn * f->rpm;                                         /* speed in the test direction */
+    float lo = 0.2f * t->rpm_tgt, hi = 0.8f * t->rpm_tgt;
+
+    switch (t->step) {
+    case TU_WAIT:
+        tune_fit_reset(t);
+        t->step = TU_ACC;
+        /* fall through */
+    case TU_ACC:
+        t->tq = t->sgn * t->i_tq;
+        if (outer && v > lo && v < hi) tune_fit_add(t, t->t, v);
+        if (v < -0.2f * t->rpm_tgt) return tune_fail(t, "wrong_direction");
+        if (v >= t->rpm_tgt) {
+            if (!tune_fit_slope(t, &t->a1)) return tune_fail(t, "fit_accel");
+            tune_fit_reset(t);
+            t->step = TU_DEC;
+        } else if (t->t > TU_TIMEOUT_S) return tune_fail(t, "no_accel");
+        return 0;
+    case TU_DEC:
+        t->tq = -t->sgn * t->i_tq;
+        if (outer && v > lo && v < hi) tune_fit_add(t, t->t, v);
+        if (v <= 0.1f * t->rpm_tgt) {
+            t->tq = 0.0f;
+            t->step = TU_DONE;
+            if (!tune_fit_slope(t, &t->a2)) return tune_fail(t, "fit_decel");
+            float da = (t->a1 - t->a2) * (TWO_PI_F / 60.0f);            /* rad/s^2 */
+            if (!(t->a1 > 0.0f && t->a2 < 0.0f && da > 0.0f)) return tune_fail(t, "bad_fit");
+            t->j_kgm2 = 2.0f * t->kt * t->i_tq / da;
+            t->tf_nm  = -t->j_kgm2 * 0.5f * (t->a1 + t->a2) * (TWO_PI_F / 60.0f);
+            if (!(t->j_kgm2 > 1.0e-8f && t->j_kgm2 < 1.0f)) return tune_fail(t, "inertia_range");
+            return 1;
+        }
+        if (t->t > TU_TIMEOUT_S) return tune_fail(t, "no_decel");
+        return 0;
+    default:
+        t->tq = 0.0f;
+        return 1;
+    }
+}
+
+void foc_tune_gains(const foc_tune_t *t, float bw_hz, float *spd_kp, float *spd_ki, float *pos_kp)
+{
+    float w = TWO_PI_F * bw_hz;
+    float kp = t->j_kgm2 * w / t->kt * (TWO_PI_F / 60.0f);             /* A per rpm */
+    *spd_kp = kp;
+    *spd_ki = kp * w * 0.25f;                                          /* PI zero at a quarter of the crossover */
+    *pos_kp = w / 24.0f;                                               /* position bandwidth w/4; 1 rpm = 6 deg/s */
+}

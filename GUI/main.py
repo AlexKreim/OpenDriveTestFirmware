@@ -66,6 +66,21 @@ ERR_TEXT = {
     "refused": "The firmware refused the command.",
 }
 
+TUNE_ERR_TEXT = {
+    "rpm_range": "The test speed would be below 100 rpm (speed limit, Kv or bus voltage too low).",
+    "current_range": "The test current (half of the FOC current limit) is too small.",
+    "wrong_direction": "The motor turned the wrong way. Run the motor calibration again.",
+    "no_accel": "The motor did not reach the test speed within 4 s (load too high, or current limit too low).",
+    "no_decel": "The motor did not slow down within 4 s.",
+    "fit_accel": "Too few speed samples while accelerating (the motor accelerates too fast: lower the FOC current limit).",
+    "fit_decel": "Too few speed samples while braking (lower the FOC current limit).",
+    "bad_fit": "The measured acceleration / deceleration is not plausible.",
+    "inertia_range": "The measured inertia is not plausible.",
+    "range": "The computed gains are outside the allowed parameter range. Nothing was changed.",
+    "fault": "A fault stopped the test.",
+    "aborted": "The test was stopped.",
+}
+
 CAL_ERR_TEXT = {
     "encoder": "The encoder (AS5047P) did not answer reliably.",
     "no_current": "The calibration current did not flow. Check the motor wires, the supply and the current sensors.",
@@ -491,6 +506,31 @@ class MainWindow(QtWidgets.QMainWindow):
         h = QtWidgets.QLabel("Automatic: Kp = 2 pi * bandwidth * L, Ki = 2 pi * bandwidth * R, from the calibrated values.")
         h.setWordWrap(True)
         form.addRow(h)
+        lay.addWidget(g)
+
+        g = QtWidgets.QGroupBox("Speed / position gain auto-tune")
+        gl = QtWidgets.QVBoxLayout(g)
+        t = QtWidgets.QLabel("Accelerates the motor with half the FOC current limit (up to half the speed limit, at most 1500 rpm), "
+                             "brakes it, and computes inertia and friction. Sets speed Kp / Ki and position Kp for the chosen "
+                             "speed-loop bandwidth. Run it with the load that will be used, free to rotate. Needs the calibration.")
+        t.setWordWrap(True)
+        gl.addWidget(t)
+        row = QtWidgets.QHBoxLayout()
+        self.tune_bw = QtWidgets.QDoubleSpinBox()
+        self.tune_bw.setRange(1.0, 20.0)
+        self.tune_bw.setDecimals(1)
+        self.tune_bw.setValue(5.0)
+        self.tune_bw.setSuffix(" Hz")
+        self.tune_bw.setToolTip("Speed-loop bandwidth. Higher = stiffer but noisier. Position bandwidth is a quarter of it.")
+        row.addWidget(QtWidgets.QLabel("Bandwidth:"))
+        row.addWidget(self.tune_bw)
+        self.btn_tune = QtWidgets.QPushButton("Auto-tune speed / position gains")
+        self.btn_tune.clicked.connect(lambda _=False: self.on_tune())
+        row.addWidget(self.btn_tune, 1)
+        gl.addLayout(row)
+        self.tune_label = QtWidgets.QLabel("")
+        self.tune_label.setWordWrap(True)
+        gl.addWidget(self.tune_label)
         lay.addWidget(g)
 
         g = QtWidgets.QGroupBox("Speed loop (PI)")
@@ -1183,6 +1223,62 @@ class MainWindow(QtWidgets.QMainWindow):
         self._store_preset(d, replace=base if base.get("_user") else None)
         return name
 
+    # ------------------------------------------------------------------ gain auto-tune
+    def on_tune(self):
+        if not self.connected():
+            return
+        if self.running():
+            QtWidgets.QMessageBox.information(self, APP_TITLE, "Stop the motor first.")
+            return
+        if int(self.params.get("encdir", 0)) == 0:
+            QtWidgets.QMessageBox.information(self, APP_TITLE, "Run 'Calibrate motor' first.")
+            return
+        imax = float(self.params.get("imax", 0.0))
+        rpm = min(1500.0, 0.5 * float(self.params.get("rpmmax", 1500.0)))
+        q = QtWidgets.QMessageBox.question(
+            self, APP_TITLE,
+            "The motor will be accelerated with %.1f A to about %.0f rpm and braked again. Keep it free to rotate "
+            "and keep clear of the shaft.\n\nStart the auto-tune?" % (0.5 * imax, rpm))
+        if q != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.flush_timer.stop()
+        self.flush_sets()
+        self.link.send("tune %.1f" % self.tune_bw.value())
+        self.tune_label.setText("Auto-tune running...")
+        self.set_status("Auto-tune running...")
+
+    def on_tune_result(self, r):
+        if r["ok"]:
+            txt = ("Inertia %.1f g cm^2, friction %.2f mNm. At %.1f Hz: speed Kp %.5f A/rpm, Ki %.5f A/(rpm s), position Kp %.4f rpm/deg."
+                   % (r["j_gcm2"], r["tf_mnm"], r["bw"], r["spdkp"], r["spdki"], r["poskp"]))
+            self.link.send("get")
+            saved = self.store_tune_in_preset(r)
+            self.link.send("save")                       # the motor is stopped again
+            txt += " Written to flash" + (" and saved in the preset '%s'." % saved if saved else ".")
+            self.tune_label.setText(txt)
+            self.log_line("Auto-tune finished: " + txt)
+            self.set_status("Auto-tune finished and stored.")
+        else:
+            why = TUNE_ERR_TEXT.get(r["reason"], r["reason"])
+            self.tune_label.setText("Auto-tune failed: " + why)
+            self.log_line("Auto-tune failed (%s)" % r["reason"])
+            self.set_status("Auto-tune failed.")
+            QtWidgets.QMessageBox.warning(self, APP_TITLE, "Auto-tune failed:\n" + why)
+            self.link.send("get")
+        self.update_enabled()
+
+    def store_tune_in_preset(self, r):
+        """Put the tuned gains into the board's current preset (as your own preset, bundled ones stay untouched)."""
+        name = self.params.get("_name") or self.preset_combo.currentText()
+        base = self.presets.get(name)
+        if not base:
+            self.log_line("No preset selected: the gains are on the board only.")
+            return None
+        d = {k: v for k, v in base.items() if not k.startswith("_")}
+        d.update({"spd_kp": r["spdkp"], "spd_ki": r["spdki"], "pos_kp": r["poskp"]})
+        self._store_preset(d, replace=base if base.get("_user") else None)
+        return name
+
     # ------------------------------------------------------------------ step-response helper
     def on_step_kind(self):
         k = STEP_KINDS[self.step_kind.currentIndex()]
@@ -1317,6 +1413,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                   "than this program. Update one of them.")
             elif kind == "calibration":
                 self.on_calibration(ev[1])
+            elif kind == "tune":
+                self.on_tune_result(ev[1])
             elif kind == "log":
                 self.log_line("board: " + ev[1])
             elif kind == "disconnected":
@@ -1429,6 +1527,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for b in self.start_btns:
             b.setEnabled(con and not run and self.state != P.ST_FAULT)
         self.btn_calib.setEnabled(con and not run and self.state != P.ST_FAULT)
+        self.btn_tune.setEnabled(con and not run and self.state != P.ST_FAULT)
         self.btn_step.setEnabled(con and not self.step_active and self.state != P.ST_FAULT)
         self.btn_step_stop.setEnabled(self.step_active)
         for w in (self.rb_ol, self.rb_foc):

@@ -257,6 +257,16 @@ The plots show command, SPI speed (main loop, smoothed) and FOC speed (the contr
 
 ## 9. Tuning by hand and reducing jitter
 
+**Gain auto-tune** (Tuning tab, *Auto-tune speed / position gains*, or `tune [bw_hz]`). Needs the motor calibration. In torque
+mode the motor is accelerated with half the FOC current limit (`imax`) to half the speed limit (at most 1500 rpm, and at most a
+back-EMF of 40 % of the bus voltage), then braked with the same current down to 10 % of that speed, then switched off. The speed
+between 20 % and 80 % is fitted with a straight line in both phases: inertia J = 2·Kt·I / (a1 − a2), friction Tf = −J·(a1 + a2)/2,
+with Kt = 8.27 / Kv. For the speed-loop bandwidth `bw` (default 5 Hz, 1–20 Hz, ω = 2π·bw):
+`spdkp` = J·ω/Kt (in A/rpm), `spdki` = `spdkp`·ω/4, `poskp` = ω/24 (position bandwidth ω/4). Result line
+`TUNE,ok,<J g·cm²>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`. The firmware only changes the three gains in
+RAM; the GUI stores them in the current preset and writes them to flash. Run it with the real load, free to rotate. Stop, a fault
+or the host watchdog end the test like a normal run. *Not tested on hardware yet.*
+
 The **step-response helper** (Tuning tab) alternates the set point between two values
 and reports rise time, overshoot and settling time.
 
@@ -367,6 +377,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `mode 0\|1\|2\|3` | Open loop / torque / speed / position |
 | `start`, `stop`, `clear` | Run, coast, reset a fault |
 | `tq <A>`, `pos <deg>` | Torque and position set points |
+| `tune [bw_hz]` | Speed/position gain auto-tune (section 9) → `TUNE,ok,...` or `TUNE,fail,<reason>` |
 | `calibrate` | Motor calibration → `CAL,ok,<R_ll mΩ>,<L_ll µH>,<dir>,<pp>` or `CAL,fail,<reason>` |
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |
 | `stream <hz>` | Telemetry `T,...` lines (22 fields, see `protocol.py`) |
@@ -376,7 +387,7 @@ Commands answer `OK` or `ERR,<reason>`.
 ## 14. Tests for developers
 
 * **Firmware control code** (`esc_firmware/tests`): `bash tests/run_foc_sim.sh` compiles `esc_foc.c` and `esc_params.c` with gcc
-  and runs them against a simulated PMSM (ODrive M8325s): alignment, torque, speed, calibration, overspeed and position.
+  and runs them against a simulated PMSM (ODrive M8325s): alignment, torque, speed, calibration, overspeed, position and the gain auto-tune.
   `GLITCH=0.05` adds corrupted encoder frames; `hand` simulates turning the shaft by hand; `tune` sweeps position gains.
 * **GUI** (`esc_gui/tests`, needs gcc and the `esc_firmware` folder next to `esc_gui`): `python tests/test_link.py` and
   `python tests/test_gui_smoke.py`. They use a simulated board that runs the firmware's real parameter code, and Qt stubs, so no display is needed.

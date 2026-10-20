@@ -175,6 +175,17 @@ class FakeEsc:
                 self.state = 5
                 self.cal_at = time.monotonic() + 0.4
                 self._emit("OK\r\n")
+        elif c == "tune":
+            if self.state == 4:
+                self._emit("ERR,fault\r\n")
+            elif self.state != 0:
+                self._emit("ERR,not_idle\r\n")
+            elif self._param("encdir") == 0:
+                self._emit("ERR,no_enc_cal\r\n")
+            else:
+                self.state = 3
+                self.tune_at = time.monotonic() + 0.4
+                self._emit("OK\r\n")
         elif c == "start":
             if self.state == 4:
                 self._emit("ERR,fault\r\n")
@@ -253,6 +264,13 @@ class FakeEsc:
                 self.state = 0
                 self.cal_at = None
                 self._emit("CAL,ok,48.000,21.000,1,20.00\r\n")
+            if self.state == 3 and getattr(self, "tune_at", None) and now >= self.tune_at:
+                self._h("set spdkp 0.012", "ANY")
+                self._h("set spdki 0.4", "ANY")
+                self._h("set poskp 1.3", "ANY")
+                self.state = 0
+                self.tune_at = None
+                self._emit("TUNE,ok,200.000,1.500,0.012000,0.400000,1.300000,5.000\r\n")
             if self.wd_ms and self.state in (1, 2, 3) and (now - self.last_rx) * 1000 > self.wd_ms:
                 self.state = 0
                 self.rpm = 0.0

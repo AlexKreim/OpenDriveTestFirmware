@@ -35,6 +35,12 @@ static foc_cal_t     cal;
 static esc_mode_t    run_mode;                   /* mode latched at start */
 static bool          cal_request;                /* the coming start is a calibration */
 static volatile int  cal_rc;
+/* gain auto-tune: a torque-mode FOC run whose torque command comes from foc_tune_step. tune_arm is set by motor_tune_start just
+ * before it calls motor_start; motor_start moves it to tune_request (one-shot). Stop, fault and the end of the test clear it. */
+static foc_tune_t    tune;
+static bool          tune_arm;
+static volatile bool tune_request;
+static volatile int  tune_rc;
 static volatile uint16_t enc_cached;
 static volatile bool enc_cached_ok;
 
@@ -176,7 +182,7 @@ static bool foc_tick(const foc_in_t *in)
         return false;
     }
     foc_cmd_t cmd;
-    cmd.tq_a = g_tq_cmd;
+    cmd.tq_a = tune_request ? tune.tq : g_tq_cmd;
     cmd.rpm = g_par.rpm * (float)g_par.dir;
     cmd.pos_deg = g_pos_cmd;
     bool step_ok = foc_step(&foc, in, &cmd, &g_par, &g_eff);
@@ -189,6 +195,18 @@ static bool foc_tick(const foc_in_t *in)
     if (!step_ok) {
         motor_fault(foc.fault == FF_ENCODER ? FLT_ENCODER : FLT_OVERSPEED);
         return false;
+    }
+    if (tune_request) {
+        int rc = foc_tune_step(&tune, &foc, in->dt);
+        if (rc != 0) {                                        /* test finished or failed: outputs off, back to idle */
+            tune_rc = rc;
+            tune_request = false;
+            TIM1->BDTR &= ~TIM_BDTR_MOE;
+            TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;
+            g_state = ST_IDLE;
+            g_rpm_cmd = 0.0f; g_v_ll = 0.0f;
+            return false;
+        }
     }
     write_duty(foc.duty);
     if (foc.phase == FP_RUN && g_state == ST_ALIGN) g_state = ST_RUN;
@@ -401,6 +419,7 @@ void motor_fault(esc_fault_t f)
     g_id = g_iq = g_vd = g_vq = g_iq_ref = 0.0f;
     g_tq_cmd = 0.0f;
     cal_request = false;
+    tune_request = false; tune_arm = false;
 }
 
 void motor_clear_fault(void)
@@ -410,12 +429,15 @@ void motor_clear_fault(void)
 
 bool motor_start(void)
 {
-    if (g_state != ST_IDLE || !g_cal_done) return false;
+    tune_request = tune_arm;           /* one-shot: only the start made by motor_tune_start is a tune run */
+    tune_arm = false;
+    if (g_state != ST_IDLE || !g_cal_done) { tune_request = false; return false; }
     float vb = g_vbus;
     params_derive(&g_par, vb, &g_eff);
-    if (vb < VBUS_MIN_V || vb > VBUS_MAX_V) return false;
+    if (vb < VBUS_MIN_V || vb > VBUS_MAX_V) { tune_request = false; return false; }
     if (!cal_request) {
-        run_mode = g_mode;
+        run_mode = tune_request ? MODE_TORQUE : g_mode;
+        if (tune_request && g_par.enc_dir == 0) { tune_request = false; return false; }
         if (run_mode != MODE_OPEN && g_par.enc_dir == 0) return false;     /* FOC needs the encoder calibration */
         if (run_mode == MODE_OPEN) { g_id = g_iq = 0.0f; }
     }
@@ -429,6 +451,7 @@ bool motor_start(void)
     enc_cached_ok = false;
     foc_log_frozen = false; foc_log_head = 0;
     g_vd = g_vq = g_iq_ref = 0.0f; g_pos_sp = -1.0f;
+    if (tune_request) foc_tune_begin(&tune, &g_par, vb);
 
     TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;
     TIM1->CCER = CCER_ALL;
@@ -450,6 +473,26 @@ bool motor_cal_start(void)
 }
 
 int motor_cal_status(void) { return cal_rc; }
+
+bool motor_tune_start(void)
+{
+    if (g_state != ST_IDLE) return false;
+    tune_rc = 0;
+    tune_arm = true;
+    return motor_start();                /* clears tune_arm, refuses (and clears the request) like a normal start */
+}
+
+int motor_tune_status(void) { return tune_rc; }
+
+bool motor_tune_result(float bw_hz, float *j_kgm2, float *tf_nm, float *spd_kp, float *spd_ki, float *pos_kp, const char **err)
+{
+    if (tune_rc == 0) return false;
+    if (err) *err = tune.err;
+    if (tune_rc < 0) return false;
+    *j_kgm2 = tune.j_kgm2; *tf_nm = tune.tf_nm;
+    foc_tune_gains(&tune, bw_hz, spd_kp, spd_ki, pos_kp);
+    return true;
+}
 
 bool motor_cal_result(float *r, float *l, int *dir, float *pp, const char **err)
 {
@@ -473,6 +516,7 @@ void motor_stop(void)
 {
     if (g_state != ST_FAULT) g_state = ST_IDLE;
     cal_request = false;
+    tune_request = false; tune_arm = false;
     g_tq_cmd = 0.0f;
     TIM1->BDTR &= ~TIM_BDTR_MOE;
     TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;

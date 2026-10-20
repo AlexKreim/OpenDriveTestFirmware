@@ -46,6 +46,10 @@ bool  motor_trigger_timing_ok(void);       /* boot check of the hardware ADC tri
 bool  motor_cal_start(void);                /* motor R/L + encoder calibration, runs in the control interrupt */
 int   motor_cal_status(void);               /* 0 = running / not started, 1 = finished ok, -1 = failed */
 bool  motor_cal_result(float *r_phase_ohm, float *l_phase_h, int *enc_dir, float *pp, const char **err);
+/* speed / position gain auto-tune (torque pulse test, see foc_tune_t). Same preconditions as a FOC start. */
+bool  motor_tune_start(void);
+int   motor_tune_status(void);              /* 0 = running / not started, 1 = finished ok, -1 = failed */
+bool  motor_tune_result(float bw_hz, float *j_kgm2, float *tf_nm, float *spd_kp, float *spd_ki, float *pos_kp, const char **err);
 bool  motor_angle(uint16_t *a);             /* last angle read by the control interrupt (valid while FOC / calibration runs) */
 bool  motor_foc_active(void);
 int   motor_foc_log_count(void);            /* FOC samples kept for the last fault (diagnostics) */

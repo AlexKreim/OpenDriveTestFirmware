@@ -327,6 +327,52 @@ static void tune_sweep(void)
         if (si[d] / sk[c] < 12) tune_case(Js[a], pk[b], sk[c], si[d]);
 }
 
+/* gain auto-tune: torque pulse test on the plant, then a speed step with the gains it found */
+static void test_autotune(int sdir, double J)
+{
+    printf("auto-tune (sensor dir %+d, J %.1e kg m^2)\n", sdir, J);
+    plant_t m = make_plant(); m.sensor_dir = sdir; m.J = J;
+    esc_params_t p = make_params(); p.enc_dir = (int8_t)sdir; p.rpm_max = 1500;
+    esc_eff_t e;
+    params_gains(&p, &e);
+    link_t lk; memset(&lk, 0, sizeof lk);
+    lk.enc_pipe = encoder(&m);
+    foc_in_t in; foc_cmd_t cmd; memset(&cmd, 0, sizeof cmd);
+    sample(&m, &in, &lk);
+    foc_t f; foc_tune_t tu;
+    foc_begin(&f, FM_TORQUE, &p, &in);
+    foc_tune_begin(&tu, &p, (float)m.vbus);
+    float pend[3] = {0.5f, 0.5f, 0.5f};
+    int rc = 0;
+    double peak = 0.0;
+    for (long i = 0; i < (long)(12.0 / TS) && rc == 0; i++) {
+        cmd.tq_a = tu.tq;
+        plant_step(&m, pend, TS);
+        sample(&m, &in, &lk);
+        if (!foc_step(&f, &in, &cmd, &p, &e)) { printf("  fault %d\n", (int)f.fault); break; }
+        memcpy(pend, f.duty, sizeof pend);
+        rc = foc_tune_step(&tu, &f, 0.0f);
+        double w = fabs(m.w_m * 60.0 / (2 * M_PI));
+        if (w > peak) peak = w;
+    }
+    CHECK(rc == 1, "tune finished (rc %d, err %s)", rc, tu.err ? tu.err : "-");
+    if (rc != 1) return;
+    printf("     target %.0f rpm, peak %.0f rpm, a1 %.0f a2 %.0f rpm/s, J %.3e, Tf %.4f Nm\n", tu.rpm_tgt, peak, tu.a1, tu.a2, tu.j_kgm2, tu.tf_nm);
+    CHECK(fabs(tu.j_kgm2 / J - 1.0) < 0.15, "inertia within 15 %% (%.3e vs %.3e)", tu.j_kgm2, J);
+    CHECK(peak < 1.2 * tu.rpm_tgt, "speed stays near the target (peak %.0f rpm)", peak);
+    float kp, ki, pkp;
+    foc_tune_gains(&tu, 5.0f, &kp, &ki, &pkp);
+    printf("     gains at 5 Hz: spdkp %.5f spdki %.5f poskp %.4f\n", kp, ki, pkp);
+    /* the gains must give a working speed loop */
+    plant_t m2 = make_plant(); m2.sensor_dir = sdir; m2.J = J; m2.tload = 0.002;
+    esc_params_t p2 = make_params(); p2.enc_dir = (int8_t)sdir; p2.accel = 500; p2.rpm_max = 1500;
+    p2.spd_kp = kp; p2.spd_ki = ki; p2.pos_kp = pkp;
+    foc_t f2;
+    int ok = run(&m2, &p2, FM_SPEED, 6.0, cb_spd, NULL, &f2, NULL, NULL, NULL, NULL, 0);
+    double w = m2.w_m * 60.0 / (2 * M_PI);
+    CHECK(ok && fabs(w + 200.0) < 5.0, "speed loop with the tuned gains reaches -200 rpm (%.1f)", w);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "tune")) { srand(1); tune_sweep(); return 0; }
@@ -342,6 +388,9 @@ int main(int argc, char **argv)
     test_overspeed();
     test_position(1);
     test_position(-1);
+    test_autotune(1, 2.0e-4);
+    test_autotune(-1, 2.0e-4);
+    test_autotune(1, 1.0e-3);
     printf("\n%s (%d failure(s))\n", fails ? "FAILED" : "ALL OK", fails);
     return fails ? 1 : 0;
 }
