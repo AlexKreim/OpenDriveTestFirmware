@@ -950,6 +950,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._updating:
             return
         self.params[name] = value
+        if name == "rpmmax":
+            self.set_rpm_range(value)               # at once, not only after the next 'get'
         if name in ("imax", "kt"):
             self.update_torque_range()
             self.update_torque_label()
@@ -986,16 +988,20 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.on_param_widget("dir", 1.0 if forward else -1.0)
 
+    def set_rpm_range(self, rpmmax):
+        """Target-speed slider and spin box end at the speed limit (rpmmax); the spin box cannot exceed the 'rpm' range."""
+        top = min(float(rpmmax), float(P.PARAM_SPEC_BY_NAME["rpm"][4]))
+        self.rpm_slider.blockSignals(True)
+        self.rpm_slider.setMaximum(int(top))
+        self.rpm_slider.blockSignals(False)
+        self.pw["rpm"].blockSignals(True)
+        self.pw["rpm"].setMaximum(top)
+        self.pw["rpm"].blockSignals(False)
+
     def apply_params_to_widgets(self):
         self._updating = True
         try:
-            rpmmax = self.params.get("rpmmax", 1500.0)
-            self.rpm_slider.blockSignals(True)
-            self.rpm_slider.setMaximum(int(rpmmax))
-            self.rpm_slider.blockSignals(False)
-            self.pw["rpm"].blockSignals(True)
-            self.pw["rpm"].setMaximum(rpmmax)
-            self.pw["rpm"].blockSignals(False)
+            self.set_rpm_range(self.params.get("rpmmax", 1500.0))
             for name, w in self.pw.items():
                 if name in self.params:
                     self.set_widget(w, self.params[name])
