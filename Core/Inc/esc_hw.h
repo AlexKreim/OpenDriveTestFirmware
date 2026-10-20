@@ -42,6 +42,11 @@ void  hw_bemf_enable(bool en);
 
 /* Encoder */
 uint16_t hw_enc_count(void);
+/* ABI counts per revolution (x4 decoding) from the AS5047P SETTINGS1/2 registers, ENC_CPR if they could not be read.
+ * Set by hw_enc_detect() at boot. ABI is diagnostics only (open-loop speed readout, 'enc', 'status'); FOC uses the SPI angle. */
+extern volatile uint32_t g_enc_cpr;
+/* reads SETTINGS1 (0x0018) / SETTINGS2 (0x0019); motor stopped. Returns false if the SPI read failed. */
+bool     hw_enc_detect(uint16_t *settings1, uint16_t *settings2, bool *abi_on);
 uint16_t hw_as5047_read(uint16_t addr, bool *err);
 uint16_t hw_as5047_pipe(bool *ok);
 void     hw_as5047_reset(void);       /* re-init SPI3 and flush the encoder interface */   /* control interrupt only: pipelined angle read, one SPI frame */

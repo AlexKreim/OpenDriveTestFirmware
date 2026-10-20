@@ -19,6 +19,7 @@ volatile esc_fault_t g_fault     = FLT_NONE;
 volatile float       g_i[3]      = {0, 0, 0};
 volatile float       g_rpm_meas  = 0.0f;
 volatile float       g_rpm_cmd   = 0.0f;
+volatile float       g_rpm_abi   = 0.0f;
 volatile float       g_v_ll      = 0.0f;
 volatile bool        g_cal_done  = false;
 volatile uint16_t    g_raw[3];
@@ -316,7 +317,8 @@ static void control_isr(void)
     sp_acc += (int16_t)(uint16_t)(c - sp_last);
     sp_last = c;
     if (++sp_tick >= PWM_FREQ_HZ / 20UL) {
-        if (run_mode == MODE_OPEN) g_rpm_meas = (float)sp_acc * (60.0f * 20.0f / (float)ENC_CPR);
+        g_rpm_abi = (float)sp_acc * (60.0f * 20.0f / (float)g_enc_cpr);
+        if (run_mode == MODE_OPEN) g_rpm_meas = g_rpm_abi;
         sp_acc = 0; sp_tick = 0;
     }
 

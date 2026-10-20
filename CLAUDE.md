@@ -46,7 +46,8 @@ is `README.md` (same file in `GUI/`). Keep both copies identical when you edit i
 - Bus voltage PA0 (divider 23), CC6905 bus current (PC2/PB12), phase voltage dividers PA4/PC4/PB11 (PB10 low = on),
   driver NTC PC1 (10k, beta 3380), motor NTC PC0 (often not fitted, reads -999).
 - AS5047P: SPI3 PC10/11/12, nCS PB9, 14-bit angle (used by FOC, read inside the control interrupt as one pipelined frame).
-  ABI on TIM3 (PC6/PC7, index PD2) reads 0 counts (ABI not configured); only the open-loop speed readout uses it.
+  ABI on TIM3 (PC6/PC7, index PD2) read 0 counts so far; diagnostics and the open-loop speed readout only.
+  On the current board the AS5047P reports MAGL=1, AGC 255 (field too weak: magnet too far / weak), 2026-10-20.
 - LED RGB on PC13/14/15 (active low). Full pin map: header comment of `Core/Src/esc_hw.c`.
 
 ## 4. Firmware
@@ -127,5 +128,5 @@ motor, so re-check on the 2212 before trusting or fixing the method.
 
 1. Verify the hardware ADC trigger on the board (`status`, `diag`); if it works, the software-fallback guards stop mattering.
 2. Re-check low-speed FOC smoothness and the calibration's L on the healthy motor.
-3. ABI encoder count is 0 (AS5047P ABI setting / `ENC_CPR` placeholder).
+3. ABI encoder count is 0. Since 2026-10-20 `g_enc_cpr` comes from the AS5047P SETTINGS1/2 (`hw_enc_detect`), `test`/`enc`/`status` show settings, pins, measured counts/rev and ABI speed (untested). If pins never toggle: wiring. Keep ABI out of FOC.
 4. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.

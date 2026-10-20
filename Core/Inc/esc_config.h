@@ -52,7 +52,7 @@
 #define NTC_MOT_RFIX       10000.0f
 
 /* ---------- Encoder (AS5047P) ---------- */
-#define ENC_CPR            4000UL     /* PLACEHOLDER: ABI counts per revolution in x4 mode (check AS5047P ABI setting) */
+#define ENC_CPR            4000UL     /* ABI counts per revolution (x4) if the AS5047P settings cannot be read; see g_enc_cpr */
 #define ENC_USE_INDEX      0          /* 1: TIM3 counter reset by index pulse on PD2 (ARR = CPR-1) */
 
 /* ---------- Protection limits (software only, there is no hardware OCP) ---------- */

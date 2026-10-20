@@ -388,6 +388,26 @@ float hw_temp_motor_c(void)
 /* ------------------------------------------------------------------ */
 uint16_t hw_enc_count(void) { return (uint16_t)TIM3->CNT; }
 
+volatile uint32_t g_enc_cpr = ENC_CPR;
+
+/* AS5047P datasheet, ABI resolution (steps per revolution = counts in x4 decoding), index = SETTINGS2.ABIRES (bits 7:5) */
+static const uint16_t abi_steps_dec[8] = {4000, 1600, 3600, 3200, 2400, 2000, 1200, 800};     /* SETTINGS1.ABIBIN = 0 */
+static const uint16_t abi_steps_bin[8] = {4096, 2048, 1024, 4096, 4096, 4096, 4096, 4096};   /* ABIBIN = 1 (codes >= 3 not listed) */
+
+bool hw_enc_detect(uint16_t *settings1, uint16_t *settings2, bool *abi_on)
+{
+    bool e1, e2;
+    uint16_t s1 = hw_as5047_read(0x0018, &e1);
+    uint16_t s2 = hw_as5047_read(0x0019, &e2);
+    if (settings1) *settings1 = s1;
+    if (settings2) *settings2 = s2;
+    if (e1 || e2) { if (abi_on) *abi_on = false; return false; }
+    if (abi_on) *abi_on = ((s1 >> 3) & 1u) == 0u && ((s1 >> 7) & 1u) == 0u;   /* UVW_ABI = 0: A/B/I on the pins; PWMon = 0: I is the index */
+    uint32_t res = (s2 >> 5) & 7u;
+    g_enc_cpr = ((s1 >> 5) & 1u) ? abi_steps_bin[res] : abi_steps_dec[res];
+    return true;
+}
+
 static uint16_t as_parity(uint16_t v)
 {
     v &= 0x7FFFu;

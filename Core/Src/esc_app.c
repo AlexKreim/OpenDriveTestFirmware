@@ -161,6 +161,9 @@ static bool     enc_stream;
 static uint32_t enc_period = 100;
 static uint16_t enc_last_abi;
 static int32_t  enc_total;       /* unwrapped ABI counts since the stream started */
+static int32_t  enc_spi_total;   /* unwrapped SPI counts since the stream started */
+static uint16_t enc_last_spi;
+static bool     enc_spi_init;
 
 static void enc_task(void)
 {
@@ -176,17 +179,28 @@ static void enc_task(void)
     enc_total += (int16_t)(uint16_t)(abi - enc_last_abi);     /* follow the 16-bit counter without wrap jumps */
     enc_last_abi = abi;
 
-    int32_t pos = enc_total % (int32_t)ENC_CPR;
-    if (pos < 0) pos += (int32_t)ENC_CPR;
+    const int32_t cpr = (int32_t)g_enc_cpr;
+    int32_t pos = enc_total % cpr;
+    if (pos < 0) pos += cpr;
     float spi_deg = (float)spi * 360.0f / 16384.0f;
-    float abi_deg = (float)pos * 360.0f / (float)ENC_CPR;
+    float abi_deg = (float)pos * 360.0f / (float)cpr;
+    /* SPI angle unwrapped since the stream started: ABI counts per SPI revolution = the real CPR (needs a few turns) */
+    if (!err) {
+        int32_t d = (int32_t)spi - (int32_t)enc_last_spi;
+        if (d > 8192) d -= 16384; else if (d < -8192) d += 16384;
+        if (enc_spi_init) enc_spi_total += d;
+        enc_last_spi = spi; enc_spi_init = true;
+    }
+    float turns_spi = (float)enc_spi_total / 16384.0f;
     float off = spi_deg - abi_deg;                            /* constant while turning if both agree */
     if (off > 180.0f)  off -= 360.0f;
     if (off < -180.0f) off += 360.0f;
 
+    if (fabsf(turns_spi) >= 1.0f)
+        uprintf("ABI counts per revolution measured: %ld (expected %ld)\r\n", (long)((float)enc_total / turns_spi), (long)cpr);
     uprintf("SPI %s deg (%5u)%s | ABI cnt %5u, rel %s deg, turns %ld | SPI-ABI %s deg | pins A%u B%u I%u\r\n",
             ff(spi_deg), (unsigned)spi, err ? " ERR" : "", (unsigned)abi, ff(abi_deg),
-            (long)(enc_total / (int32_t)ENC_CPR), ff(off),
+            (long)(enc_total / cpr), ff(off),
             (unsigned)((GPIOC->IDR >> 6) & 1u), (unsigned)((GPIOC->IDR >> 7) & 1u), (unsigned)((GPIOD->IDR >> 2) & 1u));
 }
 
@@ -287,7 +301,13 @@ static void run_tests(void)
             (unsigned)((diag >> 8) & 1u), (unsigned)((diag >> 9) & 1u),
             (unsigned)((diag >> 10) & 1u), (unsigned)((diag >> 11) & 1u),
             chk(!e1 && !e2 && magok));
-    uprintf("TIM3 ABI count: %u (turn the shaft by hand and run again; it must change)\r\n", (unsigned)hw_enc_count());
+    uint16_t s1 = 0, s2 = 0;
+    bool abi_on = false;
+    bool sok = !motor_running() && hw_enc_detect(&s1, &s2, &abi_on);
+    uprintf("AS5047P ABI: SETTINGS1 0x%02X SETTINGS2 0x%02X, ABI %s, %lu counts/rev  %s\r\n", (unsigned)(s1 & 0xFFu), (unsigned)(s2 & 0xFFu),
+            abi_on ? "on" : "off (UVW or PWM mode)", (unsigned long)g_enc_cpr, chk(sok && abi_on));
+    uprintf("TIM3 ABI count: %u, pins A%u B%u I%u (turn the shaft by hand and run again, or use 'enc': the count and pins must change)\r\n",
+            (unsigned)hw_enc_count(), (unsigned)((GPIOC->IDR >> 6) & 1u), (unsigned)((GPIOC->IDR >> 7) & 1u), (unsigned)((GPIOD->IDR >> 2) & 1u));
 
     uprintf("Result: %s (%d check(s) failed). Use 'gates' for the gate driver test.\r\n", fails ? "FAIL" : "PASS", fails);
 }
@@ -382,8 +402,8 @@ static void print_status(void)
     uprintf("mode %s, |I| %s A, Id %s, Iq %s A, enc_dir %d\r\n", mn[g_mode & 3], ff(g_imag), ff(g_id), ff(g_iq), (int)g_par.enc_dir);
     if (ot_src) uprintf("last overtemperature fault: %s at %s C\r\n", ot_src == 1 ? "driver" : "motor", ff(ot_val));
     if (uv_vbus > 0.0f) uprintf("last undervoltage fault at %s V\r\n", ff(uv_vbus));
-    uprintf("Iph A/B/C: %s / %s / %s A, rpm cmd %s, rpm ABI %s, rpm SPI %s\r\n",
-            ff(g_i[0]), ff(g_i[1]), ff(g_i[2]), ff(g_rpm_cmd), ff(g_rpm_meas), ff(rpm_spi));
+    uprintf("Iph A/B/C: %s / %s / %s A, rpm cmd %s, rpm meas %s, rpm ABI %s, rpm SPI %s\r\n",
+            ff(g_i[0]), ff(g_i[1]), ff(g_i[2]), ff(g_rpm_cmd), ff(g_rpm_meas), ff(g_rpm_abi), ff(rpm_spi));
     uprintf("temp driver %s C, motor %s C (uncalibrated)\r\n", ff(temp_drv), ff(temp_mot));
     uprintf("effective: boost %s V, align %s V, maxmod %s, rpm limit %s, applied %s V, params from %s\r\n",
             ff(g_eff.boost_v), ff(g_eff.align_v), ff(g_eff.max_mod), ff(g_eff.rpm_limit), ff(g_v_ll),
@@ -655,6 +675,7 @@ static void handle_line(char *line)
         enc_period = per;
         enc_last_abi = hw_enc_count();
         enc_total = 0;
+        enc_spi_total = 0; enc_spi_init = false;
         enc_stream = true;
         uprintf("encoder stream every %lu ms, send 'stop' to end it\r\n", (unsigned long)per);
     } else if (!strcmp(cmd, "stop")) {
@@ -737,6 +758,7 @@ void esc_app_init(void)
 #endif
     motor_init();
     flog_init(reset_code);
+    (void)hw_enc_detect(NULL, NULL, NULL);          /* ABI counts per revolution from the AS5047P settings */
     flash_image_t img;
     bool have_image = flash_image_load(&img);
     params_from_flash = have_image && img.par_valid;

@@ -416,7 +416,7 @@ Firmware source overview:
 * Current sampling uses the hardware trigger TIM1 TRGO2 (= OC4REF, 100 counts before the PWM peak) on all three injected ADCs.
   Earlier builds used TIM1 CC4 and fell back to a software start on the prototype; that diagnosis was made while a motor with a
   shorted phase was connected, so it may have been wrong. The software fallback is still there and shows in `status` if used.
-* The ABI encoder count reads 0 on the prototype (AS5047P ABI not configured); only the open-loop speed readout uses it.
+* The ABI encoder count read 0 on the prototype. The firmware now reads the AS5047P SETTINGS1/2 registers at boot and sets the ABI counts per revolution from them; `test` shows the settings and the TIM3 pins, `enc` prints the measured counts per revolution once the shaft has turned a full revolution, `status` shows the ABI speed next to the SPI speed. ABI stays diagnostics only (open-loop speed readout); FOC uses the SPI angle. If the count and the pins never change while turning, check the A/B/I wiring.
 * The inductance measurement of the calibration can read low (see section 7).
 * No hardware overcurrent protection; the software trip needs 200 µs.
 * Low bus capacitance and warm low-side FETs on the prototype limit the usable current.

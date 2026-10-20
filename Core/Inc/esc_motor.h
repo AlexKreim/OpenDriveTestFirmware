@@ -22,6 +22,7 @@ extern volatile esc_fault_t  g_fault;
 extern volatile float        g_i[3];        /* phase currents, A */
 extern volatile float        g_rpm_meas;    /* from the TIM3 encoder, mechanical rpm */
 extern volatile float        g_rpm_cmd;
+extern volatile float        g_rpm_abi;     /* from the TIM3 ABI counter in every mode (diagnostics), 50 ms window */
 extern volatile float        g_v_ll;        /* line-line voltage the controller is applying, V */
 extern volatile bool         g_cal_done;
 extern volatile esc_mode_t   g_mode;        /* selected control mode, change only while stopped */
