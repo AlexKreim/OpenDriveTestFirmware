@@ -2,6 +2,7 @@
 #include "esc_hw.h"
 #include "stm32g4xx_hal.h"
 #include "esc_foc.h"
+#include "esc_faultlog.h"
 #include <math.h>
 #include <string.h>
 
@@ -410,6 +411,7 @@ bool motor_foc_log(int i, float out[12])
 
 void motor_fault(esc_fault_t f)
 {
+    flog_fault((int)f);               /* before the state changes: records state, currents and speed at the fault */
     if (g_state == ST_RUN || g_state == ST_ALIGN) foc_log_frozen = true;       /* keep the last samples for 'focdump' */
     TIM1->BDTR &= ~TIM_BDTR_MOE;      /* outputs forced low (OSSI = 1, idle levels = 0) */
     g_fault = f;

@@ -61,6 +61,7 @@ in `main.c` and `esc_usb_rx` in `usbd_cdc_if.c`):
 | `esc_motor.c` | 20 kHz control interrupt, state machine (IDLE, PRECHARGE, ALIGN, RUN, FAULT, CALIB), open loop (V/f, sine or 6-step), current conversion, overcurrent (4 samples > `ilim`), FOC glue, FOC log for `focdump` |
 | `esc_foc.c` | Hardware-independent FOC (also compiled on the PC): Clarke/Park, dq PI with decoupling and anti-windup, SVPWM (min/max injection), encoder tracking (jump gating + relock), 2 kHz outer loops (tracking observer 80 Hz, speed PI, position profile + PID, overspeed), motor calibration state machine |
 | `esc_app.c` | USB text console, commands, telemetry, temperatures/overtemp, host watchdog, `status`/`diag`/`test`, boot sequence (ADC trigger selection, offsets, flash load) |
+| `esc_faultlog.c` | Fault log: last 8 faults / watchdog stops / abnormal resets, RAM + own flash page 0x0807E000, written by the main loop only while stopped; `faultlog [clear]` |
 | `esc_params.c`, `esc_flash.c` | Parameter table (name, type, range), defaults, flash image in the last 2 KB (0x0807F800), CRC, version 5 |
 
 Key mechanisms:
@@ -83,7 +84,7 @@ Key mechanisms:
 - Host watchdog: GUI sends `ping` every 200 ms and `wd 3000`; uses a signed time difference (an unsigned one caused random
   stops). `status` shows last stop reason, last MCU reset cause (RCC CSR flags), uptime, current-trigger mode, rejected/late
   samples, longest control-interrupt time (must be well below 50 us).
-- Build: **-O2** (at -O0 the control interrupt is too slow), hard-float, linker script FLASH LENGTH 508K.
+- Build: **-O2** (at -O0 the control interrupt is too slow), hard-float, linker script FLASH LENGTH 504K (fault log page 0x0807E000, parameters 0x0807F800).
 - **Changing `esc_params_t`** needs a `PARAMS_VERSION` bump, the static asserts in `esc_params.c`, the GUI's
   `EXPECTED_PARAMS_VERSION` in `GUI/protocol.py`, and a decision about old flash images (saved settings and
   calibration are lost otherwise). The current loader also accepts version-6 images from the reverted build.

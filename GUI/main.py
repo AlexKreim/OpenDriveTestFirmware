@@ -645,6 +645,16 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.btn_raw)
         gl.addLayout(row)
         lay.addWidget(g)
+        g = QtWidgets.QGroupBox("Diagnostics")
+        row = QtWidgets.QHBoxLayout(g)
+        for title, cmd, tip in (("Status", "status", "State, last stop reason, last MCU reset, current trigger, interrupt time."),
+                                ("Fault log", "faultlog", "Last 8 faults / watchdog stops / abnormal resets, kept in flash."),
+                                ("Self test", "test", "Clock, ADCs, op-amps, encoder, NTCs.")):
+            b = QtWidgets.QPushButton(title)
+            b.setToolTip(tip + " Result in the console below.")
+            b.clicked.connect(lambda _=False, c=cmd: self.link.send(c) if self.connected() else None)
+            row.addWidget(b)
+        lay.addWidget(g)
         lay.addStretch(1)
         return w
 

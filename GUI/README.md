@@ -148,10 +148,10 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 }
 ```
 
-### 3.3 Reserve the parameter flash page
+### 3.3 Reserve the parameter and fault-log flash pages
 
-The settings live in the last 2 KB of flash (0x0807F800). In the linker script `STM32G474RETX_FLASH.ld` change
-`FLASH ... LENGTH = 512K` to **`LENGTH = 508K`**. Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
+The settings live in the last 2 KB of flash (0x0807F800), the fault log at 0x0807E000. In the linker script
+`STM32G474RETX_FLASH.ld` set `FLASH ... LENGTH` to **`504K`** (done in this repo). Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
 `HAL_FLASH_MODULE_ENABLED` must be on in `stm32g4xx_hal_conf.h` (it is by default).
 
 ### 3.4 Compiler settings (important)
@@ -299,6 +299,12 @@ Typical values that worked on the prototype:
 
 `clear` resets a fault. The GUI shows faults in plain words.
 
+**Fault log** (`faultlog`, button *Fault log* on the Motor & Advanced tab): the last 8 faults, host-watchdog stops and abnormal MCU
+resets (watchdog, software/HardFault, low-power), oldest first, with boot number, uptime, state, mode, bus voltage, phase currents,
+|I|, speed, Iq reference and the last sample above the overcurrent level. Lines `L,<i>,<boot>,<uptime ms>,<kind>,<what>,<state>,
+<mode>,<vbus>,<ia>,<ib>,<ic>,<imag>,<rpm>,<iq_ref>,<oc_a>`. It is written to its own flash page once the motor is stopped, so it
+survives a reset or power cycle (a brown-out itself cannot be logged; see *last MCU reset* in `status`). `faultlog clear` empties it.
+
 **Host watchdog**: the GUI pings the board every 200 ms and sets `wd 3000`. If nothing arrives for 3 s the motor is stopped and
 `INFO: motor stopped by the host watchdog` is printed. Closing the GUI or disconnecting sends STOP.
 
@@ -380,6 +386,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `tune [bw_hz]` | Speed/position gain auto-tune (section 9) → `TUNE,ok,...` or `TUNE,fail,<reason>` |
 | `calibrate` | Motor calibration → `CAL,ok,<R_ll mΩ>,<L_ll µH>,<dir>,<pp>` or `CAL,fail,<reason>` |
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |
+| `faultlog [clear]` | Fault log (section 10): `L,count,<n>,boot,<b>` then `L,<i>,...` lines |
 | `stream <hz>` | Telemetry `T,...` lines (22 fields, see `protocol.py`) |
 | `wd <ms>`, `ping` | Host watchdog |
 | `led r\|g\|b\|off\|auto`, `bemf 0\|1` | LED test, phase-voltage divider |
@@ -400,6 +407,7 @@ Firmware source overview:
 | `esc_motor.c` | Control interrupt (20 kHz), state machine, open loop, current sampling, overcurrent, FOC glue |
 | `esc_foc.c` | FOC core (hardware independent): current loops, observer, speed/position loops, calibration |
 | `esc_hw.c` | Registers: TIM1, ADCs, op-amps, SPI3, TIM3, GPIO |
+| `esc_faultlog.c` | Fault log in RAM and its own flash page (0x0807E000) |
 | `esc_params.c`, `esc_flash.c` | Parameter table, defaults, flash image (version 5; images saved by the short-lived version 6 are read too) |
 | `esc_config.h` | Board constants, scaling, limits, defaults |
 

@@ -5,7 +5,7 @@
 #include "esc_params.h"
 
 /* The parameters and the current-sensor zero offsets live in the last 2 KB of the 512 KB flash (0x0807F800).
- * Reserve that area in the linker script: FLASH LENGTH = 508K (see README). */
+ * Reserve that area in the linker script: FLASH LENGTH = 504K (also keeps the fault-log page 0x0807E000 free). */
 #define PARAM_FLASH_ADDR  0x0807F800UL
 
 typedef enum { FLASH_RES_OK = 0, FLASH_RES_ERASE, FLASH_RES_PROGRAM, FLASH_RES_VERIFY } flash_res_t;

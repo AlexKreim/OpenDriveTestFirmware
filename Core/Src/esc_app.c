@@ -3,6 +3,7 @@
 #include "esc_motor.h"
 #include "esc_params.h"
 #include "esc_flash.h"
+#include "esc_faultlog.h"
 #include "stm32g4xx_hal.h"
 #include "usbd_cdc_if.h"
 #include "usbd_cdc.h"
@@ -22,6 +23,7 @@ static volatile uint8_t  rxbuf[256];
 static volatile uint16_t rxh, rxt;
 static const char *stop_reason = "none";
 static const char *reset_cause = "unknown";
+static int reset_code;                    /* flog_reset_t, 0 = power-on / pin / unknown (not logged) */
 static bool motor_running(void);
 static volatile uint32_t last_rx_ms;      /* host watchdog: time of the last received byte */
 static uint32_t          wd_ms;           /* 0 = host watchdog off */
@@ -140,7 +142,7 @@ static void slow_task(void)
          * difference wrapped to ~4 billion ms and stopped the motor at random */
         int32_t since_rx = (int32_t)(now - last_rx_ms);
         if (wd_ms != 0u && since_rx > (int32_t)wd_ms) {
-            if (motor_running()) stop_reason = "host watchdog (no message from the PC)";
+            if (motor_running()) { stop_reason = "host watchdog (no message from the PC)"; flog_watchdog(); }
             motor_stop();
             uprintf("INFO: motor stopped by the host watchdog (nothing received for %lu ms)\r\n", (unsigned long)since_rx);
         }
@@ -462,7 +464,7 @@ static void handle_line(char *line)
 
     if (!strcmp(cmd, "help")) {
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n"
-                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump\r\n"
+                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump | faultlog [clear]\r\n"
                 "set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
@@ -611,6 +613,30 @@ static void handle_line(char *line)
         tune_bw = bw;
         tune_active = true;
         reply_ok();
+    } else if (!strcmp(cmd, "faultlog")) {
+        /* faultlog [clear]: last faults / watchdog stops / abnormal resets, oldest first, kept in flash */
+        if (a1 && !strcmp(a1, "clear")) {
+            if (motor_running()) { reply_err("motor_running"); return; }
+            if (flog_clear()) reply_ok(); else reply_err("flash");
+            return;
+        }
+        static const char *fn[] = {"none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed"};
+        static const char *rn[] = {"?", "independent watchdog", "window watchdog", "software reset (HardFault?)", "low-power reset"};
+        static const char *sn[] = {"IDLE", "PRECHARGE", "ALIGN", "RUN", "FAULT", "CALIB"};
+        int n = flog_count();
+        uprintf("L,count,%d,boot,%u\r\n", n, (unsigned)flog_boot());
+        for (int i = 0; i < n; i++) {
+            flog_entry_t e;
+            if (!flog_get(i, &e)) break;
+            const char *kind = e.kind == FLOG_FAULT ? "fault" : e.kind == FLOG_WATCHDOG ? "watchdog" : "reset";
+            const char *what = e.kind == FLOG_FAULT ? (e.code < 7u ? fn[e.code] : "?") :
+                               e.kind == FLOG_RESET ? (e.code < 5u ? rn[e.code] : "?") : "host watchdog stop";
+            uprintf("L,%d,%u,%lu,%s,%s,%s,%u,%s,%s,%s,%s,%s,%s,%s,%s\r\n", i, (unsigned)e.boot, (unsigned long)e.uptime_ms, kind, what,
+                    e.state < 6u ? sn[e.state] : "?", (unsigned)e.mode, ff(e.vbus), ff(e.ia), ff(e.ib), ff(e.ic), ff(e.imag),
+                    ff(e.rpm), ff(e.iq_ref), ff(e.oc_a));
+            HAL_Delay(3);
+        }
+        reply_ok();
     } else if (!strcmp(cmd, "focdump")) {
         /* the last 5 ms of FOC data before an overcurrent / encoder / overspeed fault (20 kHz samples) */
         float v[12];
@@ -691,6 +717,8 @@ void esc_early_init(void)
                   (c & RCC_CSR_BORRSTF)  ? "brown-out / power-on (supply dip)" : (c & RCC_CSR_SFTRSTF) ? "software reset (e.g. after a HardFault)" :
                   (c & RCC_CSR_LPWRRSTF) ? "low-power reset" : (c & RCC_CSR_OBLRSTF) ? "option byte load" :
                   (c & RCC_CSR_PINRSTF)  ? "reset pin / debugger" : "unknown";
+    reset_code = (c & RCC_CSR_IWDGRSTF) ? FLOG_RST_IWDG : (c & RCC_CSR_WWDGRSTF) ? FLOG_RST_WWDG :
+                 (c & RCC_CSR_BORRSTF) ? 0 : (c & RCC_CSR_SFTRSTF) ? FLOG_RST_SOFT : (c & RCC_CSR_LPWRRSTF) ? FLOG_RST_LOWPWR : 0;
     RCC->CSR |= RCC_CSR_RMVF;
     hw_early_init();
 }
@@ -708,6 +736,7 @@ void esc_app_init(void)
     HAL_Delay(5);
 #endif
     motor_init();
+    flog_init(reset_code);
     flash_image_t img;
     bool have_image = flash_image_load(&img);
     params_from_flash = have_image && img.par_valid;
@@ -745,5 +774,6 @@ void esc_app_loop(void)
     stream_task();
     cal_task();
     tune_task();
+    flog_task(motor_running());
     led_task();
 }
