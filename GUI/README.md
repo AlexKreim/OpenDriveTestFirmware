@@ -376,7 +376,7 @@ Set with `set <name> <value>` or in the GUI; `get [name]` prints them; `save` wr
 
 ## 13. Command / protocol reference
 
-Plain text lines over the USB virtual COM port (any baud rate, newline-terminated). You can use PuTTY or any terminal.
+Plain text lines over the USB virtual COM port (any baud rate, newline-terminated). You can use the **command line at the bottom of the GUI** (any command, replies in the log above it, history in the drop-down / arrow keys, drag the splitter to enlarge the log) or PuTTY / any terminal while the GUI is closed.
 Commands answer `OK` or `ERR,<reason>`.
 
 | Command | Purpose |

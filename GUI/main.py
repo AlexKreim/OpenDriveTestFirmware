@@ -187,13 +187,41 @@ class MainWindow(QtWidgets.QMainWindow):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([430, 960])
-        root.addWidget(split, 1)
-
+        # log + console below the main area; drag the splitter handle to make it bigger
+        vsplit = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        vsplit.addWidget(split)
+        cons = QtWidgets.QWidget()
+        cl = QtWidgets.QVBoxLayout(cons)
+        cl.setContentsMargins(0, 0, 0, 0)
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumBlockCount(400)
-        self.log.setMaximumHeight(100)
-        root.addWidget(self.log)
+        self.log.setMaximumBlockCount(3000)
+        f = QtGui.QFont("Consolas")
+        f.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+        self.log.setFont(f)
+        cl.addWidget(self.log, 1)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Command:"))
+        self.cmd_box = QtWidgets.QComboBox()          # editable: keeps a history of the commands sent (arrow keys / drop-down)
+        self.cmd_box.setEditable(True)
+        self.cmd_box.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self.cmd_box.setMaxCount(50)
+        self.cmd_box.setToolTip("Any firmware command (see 'help'), e.g. status, faultlog, diag, raw, test, enc 200, focdump. "
+                                "Replies appear above. 'stop' always stops the motor.")
+        self.cmd_box.lineEdit().returnPressed.connect(lambda: self.on_console_send())
+        row.addWidget(self.cmd_box, 1)
+        b = QtWidgets.QPushButton("Send")
+        b.clicked.connect(lambda _=False: self.on_console_send())
+        row.addWidget(b)
+        b = QtWidgets.QPushButton("Clear log")
+        b.clicked.connect(lambda _=False: self.log.clear())
+        row.addWidget(b)
+        cl.addLayout(row)
+        vsplit.addWidget(cons)
+        vsplit.setStretchFactor(0, 1)
+        vsplit.setStretchFactor(1, 0)
+        vsplit.setSizes([700, 170])
+        root.addWidget(vsplit, 1)
 
         self.status_label = QtWidgets.QLabel("")
         self.statusBar().addWidget(self.status_label, 1)
@@ -809,6 +837,25 @@ class MainWindow(QtWidgets.QMainWindow):
     # ================================================================== helpers
     def log_line(self, text):
         self.log.appendPlainText("%s  %s" % (time.strftime("%H:%M:%S"), text))
+
+    def on_console_send(self):
+        cmd = self.cmd_box.currentText().strip()
+        if not cmd:
+            return
+        if not self.connected():
+            self.log_line("not connected")
+            return
+        if len(cmd) > 62:                              # the firmware line buffer holds 63 characters
+            self.log_line("command too long (max 62 characters)")
+            return
+        self.log_line("> " + cmd)
+        self.link.send(cmd)
+        i = self.cmd_box.findText(cmd)
+        if i >= 0:
+            self.cmd_box.removeItem(i)
+        self.cmd_box.insertItem(0, cmd)
+        self.cmd_box.setCurrentIndex(-1)
+        self.cmd_box.clearEditText()
 
     def set_status(self, text):
         self.status_label.setText(text)

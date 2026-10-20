@@ -102,6 +102,8 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
   calibration dialog that stores results in the current preset and saves), `link.py` (serial thread, command/ack matching,
   events), `protocol.py` (parameter specs: name, label, type, range, step, decimals, unit, tooltip; telemetry fields),
   `presets.py` + `presets/*.json` (user presets in `%APPDATA%\ESC_Control\presets`), `preset_dialog.py`, `stepmetrics.py`.
+- Bottom of the window: log + command line (`on_console_send`, any firmware command, history in an editable combo box).
+  Tuning tab also has the auto-tune button and the scope; Motor & Advanced has Status / Fault log / Self test buttons.
 - Torque mode starts at 0 by design (the set point is reset at start/stop).
 - Run: `run.bat` (creates `.venv`). Exe: `build_exe.bat` (PyInstaller).
 

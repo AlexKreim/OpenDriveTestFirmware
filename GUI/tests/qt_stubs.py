@@ -3,7 +3,7 @@ They implement just enough behaviour (values, ranges, signals, combo boxes) for 
 import sys
 import types
 
-SIGNALS = {"clicked", "valueChanged", "toggled", "timeout", "currentIndexChanged", "activated"}
+SIGNALS = {"clicked", "valueChanged", "toggled", "timeout", "currentIndexChanged", "activated", "returnPressed"}
 
 
 class _Sig:
@@ -51,6 +51,9 @@ class Base:
             self._sigs.setdefault(n, _Sig()).emit(*a)
 
     # generic
+    def lineEdit(self):
+        return self
+
     def blockSignals(self, b):
         self._blocked = b
 
@@ -233,6 +236,7 @@ def install():
         setattr(widgets, n, type(n, (Base,), {}))
     widgets.QTabWidget = TabWidget
     widgets.QFrame.Shape = type("Shape", (), {"NoFrame": 0})
+    widgets.QComboBox.InsertPolicy = type("InsertPolicy", (), {"NoInsert": 0})
     widgets.QMessageBox = MessageBox
     widgets.QInputDialog = InputDialog
     widgets.QFileDialog = FileDialog
@@ -243,11 +247,13 @@ def install():
     class Qt:
         class Orientation:
             Horizontal = 1
+            Vertical = 2
     core.Qt = Qt
 
     gui = types.ModuleType("PySide6.QtGui")
     gui.QShortcut = type("QShortcut", (Base,), {})
     gui.QKeySequence = type("QKeySequence", (Base,), {})
+    gui.QFont = type("QFont", (Base,), {"StyleHint": type("StyleHint", (), {"Monospace": 0})})
 
     pyside = types.ModuleType("PySide6")
     pyside.QtWidgets, pyside.QtCore, pyside.QtGui = widgets, core, gui
