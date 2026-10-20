@@ -139,6 +139,33 @@ static uint16_t read_angle(bool *err)
     return (uint16_t)(r & 0x3FFF);
 }
 
+/* USB send stuck: the CDC IN transfer stays busy when the PC no longer reads the port (program frozen, driver buffer full).
+ * The host watchdog does not catch that if the PC still sends pings. Busy for 500 ms while running: stop the motor.
+ * Busy for 3 s: disconnect and reconnect USB (the PC sees the port vanish and come back), so no power cycle is needed. */
+static uint32_t usb_busy_ms;
+
+static void usb_tx_watch(uint32_t now)
+{
+    static uint32_t last;
+    uint32_t dt = now - last;
+    last = now;
+    USBD_CDC_HandleTypeDef *hc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
+    bool busy = hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED && hc != NULL && hc->TxState != 0;
+    if (!busy) { usb_busy_ms = 0; return; }
+    usb_busy_ms += dt;
+    if (usb_busy_ms >= 500u && motor_running()) {
+        stop_reason = "USB send stuck (PC not reading the port)";
+        flog_watchdog(1);
+        motor_stop();
+    }
+    if (usb_busy_ms >= 3000u && !motor_running()) {
+        usb_busy_ms = 0;
+        USBD_Stop(&hUsbDeviceFS);           /* pull-up off: the PC sees a disconnect */
+        HAL_Delay(20);
+        USBD_Start(&hUsbDeviceFS);
+    }
+}
+
 static void slow_task(void)
 {
     static uint32_t last, n;
@@ -160,13 +187,14 @@ static void slow_task(void)
          * difference wrapped to ~4 billion ms and stopped the motor at random */
         int32_t since_rx = (int32_t)(now - last_rx_ms);
         if (wd_ms != 0u && since_rx > (int32_t)wd_ms) {
-            if (motor_running()) { stop_reason = "host watchdog (no message from the PC)"; flog_watchdog(); }
+            if (motor_running()) { stop_reason = "host watchdog (no message from the PC)"; flog_watchdog(0); }
             motor_stop();
             uprintf("INFO: motor stopped by the host watchdog (nothing received for %lu ms)\r\n", (unsigned long)since_rx);
         }
     } else {
         uv_count = 0;
     }
+    usb_tx_watch(now);
     /* temperature protection is active in every state (also idle: the fault then blocks 'start' until it is cleared and cool) */
     if (g_state != ST_FAULT) {
         if (g_par.ot_drv_en && (temp_drv < -900.0f || temp_drv > g_par.ot_drv_c)) { ot_src = 1; ot_val = temp_drv; motor_fault(FLT_OVERTEMP); }
@@ -684,7 +712,8 @@ static void handle_line(char *line)
             if (!flog_get(i, &e)) break;
             const char *kind = e.kind == FLOG_FAULT ? "fault" : e.kind == FLOG_WATCHDOG ? "watchdog" : "reset";
             const char *what = e.kind == FLOG_FAULT ? (e.code < 7u ? fn[e.code] : "?") :
-                               e.kind == FLOG_RESET ? (e.code < 5u ? rn[e.code] : "?") : "host watchdog stop";
+                               e.kind == FLOG_RESET ? (e.code < 5u ? rn[e.code] : "?") :
+                               (e.code == 1u ? "USB send stuck stop" : "host watchdog stop");
             uprintf("L,%d,%u,%lu,%s,%s,%s,%u,%s,%s,%s,%s,%s,%s,%s,%s\r\n", i, (unsigned)e.boot, (unsigned long)e.uptime_ms, kind, what,
                     e.state < 6u ? sn[e.state] : "?", (unsigned)e.mode, ff(e.vbus), ff(e.ia), ff(e.ib), ff(e.ic), ff(e.imag),
                     ff(e.rpm), ff(e.iq_ref), ff(e.oc_a));

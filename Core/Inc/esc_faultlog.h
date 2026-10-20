@@ -25,7 +25,7 @@ typedef struct {
 
 void     flog_init(int reset_code);          /* at boot: load the flash copy; reset_code 0 = normal (power-on / pin) */
 void     flog_fault(int code);               /* from motor_fault (interrupt safe), call before the state changes */
-void     flog_watchdog(void);                /* host watchdog stopped a running motor */
+void     flog_watchdog(int code);            /* a running motor was stopped: 0 = host watchdog, 1 = USB send stuck */
 void     flog_task(bool motor_running);      /* main loop: writes pending entries to flash while stopped */
 int      flog_count(void);
 bool     flog_get(int i, flog_entry_t *e);   /* 0 = oldest */

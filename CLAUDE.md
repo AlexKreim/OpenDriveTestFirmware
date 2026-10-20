@@ -84,6 +84,7 @@ Key mechanisms:
 - Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).
 - Main-loop IWDG (2 s, `wdg_start`/`wdg_kick` in `esc_app.c`), started at the end of `esc_app_init`, kicked each loop pass and in
   the focdump/faultlog loops. Any new blocking code longer than ~1 s must kick it.
+- USB send stuck (`usb_tx_watch` in `esc_app.c`): CDC TxState busy 500 ms while running -> stop; 3 s while stopped -> USBD_Stop/Start.
 - Host watchdog: GUI sends `ping` every 200 ms and `wd 3000`; uses a signed time difference (an unsigned one caused random
   stops). `status` shows last stop reason, last MCU reset cause (RCC CSR flags), uptime, current-trigger mode, rejected/late
   samples, longest control-interrupt time (must be well below 50 us).

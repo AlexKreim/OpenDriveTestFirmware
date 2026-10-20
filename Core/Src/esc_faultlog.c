@@ -74,10 +74,10 @@ void flog_fault(int code)
     add(&x);
 }
 
-void flog_watchdog(void)
+void flog_watchdog(int code)
 {
     flog_entry_t x;
-    snapshot(&x, FLOG_WATCHDOG, 0);
+    snapshot(&x, FLOG_WATCHDOG, (uint8_t)code);
     add(&x);
 }
 
