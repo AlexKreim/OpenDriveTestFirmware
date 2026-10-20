@@ -82,6 +82,8 @@ Key mechanisms:
 - Outer loops use the measured time between ticks (`foc_in_t.dt` from the DWT cycle counter), so skipped periods do not
   distort the speed.
 - Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).
+- Main-loop IWDG (2 s, `wdg_start`/`wdg_kick` in `esc_app.c`), started at the end of `esc_app_init`, kicked each loop pass and in
+  the focdump/faultlog loops. Any new blocking code longer than ~1 s must kick it.
 - Host watchdog: GUI sends `ping` every 200 ms and `wd 3000`; uses a signed time difference (an unsigned one caused random
   stops). `status` shows last stop reason, last MCU reset cause (RCC CSR flags), uptime, current-trigger mode, rejected/late
   samples, longest control-interrupt time (must be well below 50 us).

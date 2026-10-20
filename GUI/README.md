@@ -313,6 +313,8 @@ survives a reset or power cycle (a brown-out itself cannot be logged; see *last 
 The header `L,count,<n>,boot,<b>,flash,<none|ok|fail|pending>` gives the number of entries, the number of this power-on
 (entries with the same boot number come from the same power-on) and the result of the last flash write in this power-on.
 
+**Main-loop watchdog** (IWDG, 2 s): if the firmware main loop stops, the MCU resets and the outputs switch off; it shows as *independent watchdog* in `status` and in the fault log. It is frozen while a debugger halts the core.
+
 **Host watchdog**: the GUI pings the board every 200 ms and sets `wd 3000`. If nothing arrives for 3 s the motor is stopped and
 `INFO: motor stopped by the host watchdog` is printed. Closing the GUI or disconnecting sends STOP.
 
