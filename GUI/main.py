@@ -382,6 +382,8 @@ class MainWindow(QtWidgets.QMainWindow):
         rpm_row = QtWidgets.QHBoxLayout()
         self.rpm_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.rpm_slider.setRange(0, 1500)
+        self.rpm_slider.setToolTip("The slider ends at the 'Speed limit' (rpmmax, Motor & Advanced tab), which is stored per preset. "
+                                   "Raise it there; FOC trips overspeed at 1.5 x rpmmax + 50 rpm.")
         rpm_row.addWidget(self.rpm_slider, 1)
         rpm_spin = self._make_param_widget(P.PARAM_SPEC_BY_NAME["rpm"])
         rpm_spin.setMinimumWidth(110)
