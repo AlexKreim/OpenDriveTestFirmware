@@ -1,0 +1,14 @@
+../Core/Src/esc_params.c:88:14:read_val.isra	4
+../Core/Src/esc_params.c:27:6:params_defaults	1
+../Core/Src/esc_params.c:78:5:params_count	1
+../Core/Src/esc_params.c:79:13:params_name	2
+../Core/Src/esc_params.c:108:6:params_get	3
+../Core/Src/esc_params.c:116:6:params_set_name	5
+../Core/Src/esc_params.c:127:5:params_format_name	1
+../Core/Src/esc_params.c:132:6:params_set	13
+../Core/Src/esc_params.c:148:5:params_format	6
+../Core/Src/esc_params.c:188:6:params_derive	6
+../Core/Src/esc_params.c:221:7:params_max_rpm	3
+../Core/Src/esc_params.c:232:10:params_crc32	4
+../Core/Src/esc_params.c:243:6:params_pack	5
+../Core/Src/esc_params.c:261:6:params_unpack	24

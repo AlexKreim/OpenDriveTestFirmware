@@ -1,0 +1,69 @@
+# ===================================================================
+#  STM32CubeIDE firmware project (repo root = folder with the .ioc)
+# ===================================================================
+
+# Build output folders (Debug / Release configurations)
+/Debug/
+/Release/
+build/
+
+# Compiler / linker artefacts, in case they end up elsewhere
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.map
+*.list
+*.bin
+*.hex
+*.srec
+*.a
+
+# Eclipse / CubeIDE workspace and per-user state
+.metadata/
+RemoteSystemsTempFiles/
+.settings/language.settings.xml
+*.bak
+*.orig
+
+# Keep these (needed to open and regenerate the project):
+#   *.ioc, .project, .cproject, .mxproject, *.ld, *.launch, .settings/ (other files)
+# CubeMX-generated Drivers/ and Middlewares/ are committed too, so the project
+# builds without regenerating. To keep the repo small instead, uncomment:
+# /Drivers/
+# /Middlewares/
+
+# ===================================================================
+#  ESC Control GUI (Python)
+# ===================================================================
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# PyInstaller (build_exe.bat)
+dist/
+*.spec
+
+# Test binaries (normally written to the temp folder, just in case)
+foc_sim
+foc_sim.exe
+esc_params_harness
+esc_params_harness.exe
+
+# Recordings / exports from the GUI
+*.csv
+
+# ===================================================================
+#  Editors / OS
+# ===================================================================
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,4 @@
+../Core/Src/esc_flash.c:20:20:write_image	224	static
+../Core/Src/esc_flash.c:5:6:flash_image_load	352	static
+../Core/Src/esc_flash.c:54:13:flash_save_params	176	static
+../Core/Src/esc_flash.c:64:13:flash_save_offsets	176	static

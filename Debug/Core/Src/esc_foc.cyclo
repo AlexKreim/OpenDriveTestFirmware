@@ -1,0 +1,8 @@
+../Core/Src/esc_foc.c:113:14:speed_pi	6
+../Core/Src/esc_foc.c:66:13:track_enc.isra	13
+../Core/Src/esc_foc.c:47:13:out_ab	7
+../Core/Src/esc_foc.c:27:6:foc_clarke_park	1
+../Core/Src/esc_foc.c:100:6:foc_begin	1
+../Core/Src/esc_foc.c:122:6:foc_step	58
+../Core/Src/esc_foc.c:251:6:foc_cal_begin	1
+../Core/Src/esc_foc.c:266:5:foc_cal_step	44

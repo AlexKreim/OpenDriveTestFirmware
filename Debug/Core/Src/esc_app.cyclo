@@ -1,0 +1,8 @@
+../Core/Src/esc_app.c:40:13:uprintf	7
+../Core/Src/esc_app.c:57:20:ff	2
+../Core/Src/esc_app.c:96:17:read_angle	9
+../Core/Src/esc_app.c:419:13:handle_line.constprop	166
+../Core/Src/esc_app.c:31:6:esc_usb_rx	4
+../Core/Src/esc_app.c:635:6:esc_early_init	7
+../Core/Src/esc_app.c:647:6:esc_app_init	8
+../Core/Src/esc_app.c:681:6:esc_app_loop	58

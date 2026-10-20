@@ -1,0 +1,4 @@
+../Core/Src/esc_flash.c:20:20:write_image	4
+../Core/Src/esc_flash.c:5:6:flash_image_load	4
+../Core/Src/esc_flash.c:54:13:flash_save_params	1
+../Core/Src/esc_flash.c:64:13:flash_save_offsets	1

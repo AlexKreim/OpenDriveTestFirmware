@@ -1,0 +1,13 @@
+{
+  "name": "ODrive M8325s 100KV",
+  "pole_pairs": 20,
+  "kv": 100,
+  "r_ll_mohm": 48,
+  "l_ll_uh": 19.8,
+  "kt_nm_a": 0.083,
+  "rpm_max": 1500,
+  "ilim": 8,
+  "i_drive": 3,
+  "accel": 60,
+  "notes": "Datasheet: 24 mOhm and 9.9 uH phase-neutral (doubled here for line-line), 40 A continuous / 60 A forced air / 80 A peak (3 s), NTC 10k beta 3435. Speed limit and trip current are conservative bench values."
+}
