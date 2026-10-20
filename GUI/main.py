@@ -551,6 +551,57 @@ class MainWindow(QtWidgets.QMainWindow):
             self._form_row(form, n)
         lay.addWidget(g)
 
+        g = QtWidgets.QGroupBox("Scope (FOC loops, 2 kHz)")
+        gl = QtWidgets.QVBoxLayout(g)
+        t = QtWidgets.QLabel("Records 1000 samples of speed, speed set point, Iq, Iq reference, Id, Vq and position inside the "
+                             "firmware at 2 kHz / divider, starting with the next FOC run (immediately if FOC is running). "
+                             "Works with every FOC mode, the step helper and the auto-tune.")
+        t.setWordWrap(True)
+        gl.addWidget(t)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Divider:"))
+        self.scope_div = QtWidgets.QSpinBox()
+        self.scope_div.setRange(1, 50)
+        self.scope_div.setValue(1)
+        self.scope_div.valueChanged.connect(lambda v: self.scope_len.setText("= %.2f s" % (v * 0.5)))
+        row.addWidget(self.scope_div)
+        self.scope_len = QtWidgets.QLabel("= 0.50 s")
+        row.addWidget(self.scope_len)
+        self.btn_scope = QtWidgets.QPushButton("Arm capture")
+        self.btn_scope.clicked.connect(lambda _=False: self.on_scope_arm())
+        row.addWidget(self.btn_scope)
+        b = QtWidgets.QPushButton("Read now")
+        b.setToolTip("Ends the capture and reads what has been recorded so far.")
+        b.clicked.connect(lambda _=False: self.link.send("scope dump") if self.connected() else None)
+        row.addWidget(b)
+        b = QtWidgets.QPushButton("Save CSV...")
+        b.clicked.connect(lambda _=False: self.on_scope_save())
+        row.addWidget(b)
+        gl.addLayout(row)
+        self.scope_label = QtWidgets.QLabel("No capture yet.")
+        gl.addWidget(self.scope_label)
+        self.scope_plots = []
+        self.scope_curves = {}
+        for title, unit, curves in (("Speed", "rpm", (("rpm", 0, "c"), ("set point", 1, "w"))),
+                                    ("Current", "A", (("Iq", 2, "g"), ("Iq ref", 3, "y"), ("Id", 4, "r")))):
+            pl = pg.PlotWidget()
+            pl.setMinimumHeight(160)
+            pl.showGrid(x=True, y=True, alpha=0.3)
+            pl.setLabel("left", title, units=unit)
+            pl.getAxis("left").enableAutoSIPrefix(False)
+            pl.addLegend(offset=(5, 5))
+            for name, col, color in curves:
+                self.scope_curves[col] = pl.plot(pen=pg.mkPen(color, width=1.5), name=name)
+            if self.scope_plots:
+                pl.setXLink(self.scope_plots[0])
+            self.scope_plots.append(pl)
+            gl.addWidget(pl)
+        self.scope_data = None
+        self.scope_timer = QtCore.QTimer(self)
+        self.scope_timer.setInterval(300)
+        self.scope_timer.timeout.connect(lambda: self.link.send("scope state") if self.connected() else self.scope_timer.stop())
+        lay.addWidget(g)
+
         g = QtWidgets.QGroupBox("Step-response helper")
         gl = QtWidgets.QVBoxLayout(g)
         t = QtWidgets.QLabel("Alternates the set point between two values and plots reference and measurement, with rise time, "
@@ -1289,6 +1340,50 @@ class MainWindow(QtWidgets.QMainWindow):
         self._store_preset(d, replace=base if base.get("_user") else None)
         return name
 
+    # ------------------------------------------------------------------ scope
+    def on_scope_arm(self):
+        if not self.connected():
+            return
+        self.link.send("scope %d" % self.scope_div.value())
+        self.scope_label.setText("Armed: waiting for FOC to run...")
+        self.scope_timer.start()
+
+    def on_scope_state(self, state, n):
+        if state == "capturing":
+            self.scope_label.setText("Capturing... %d / 1000" % n)
+        elif state == "armed":
+            self.scope_label.setText("Armed: waiting for FOC to run...")
+        elif state == "done":
+            self.scope_timer.stop()
+            self.scope_label.setText("Reading %d samples..." % n)
+            self.link.send("scope dump")
+        else:
+            self.scope_timer.stop()
+
+    def on_scope_data(self, d):
+        self.scope_timer.stop()
+        self.scope_data = d
+        rows = d["rows"]
+        t = np.arange(len(rows)) * d["dt"]
+        a = np.array(rows) if rows else np.zeros((0, 7))
+        for col, c in self.scope_curves.items():
+            c.setData(t, a[:, col] if len(rows) else [])
+        self.scope_label.setText("%d samples, %.2f ms each (%.2f s)." % (len(rows), d["dt"] * 1e3, len(rows) * d["dt"]))
+
+    def on_scope_save(self):
+        if not self.scope_data or not self.scope_data["rows"]:
+            QtWidgets.QMessageBox.information(self, APP_TITLE, "No capture to save yet.")
+            return
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save scope capture", "scope.csv", "CSV (*.csv)")
+        if not fn:
+            return
+        with open(fn, "w", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(["t_s", "rpm", "rpm_sp", "iq_a", "iq_ref_a", "id_a", "vq_v", "pos_deg"])
+            for i, r in enumerate(self.scope_data["rows"]):
+                wr.writerow(["%.5f" % (i * self.scope_data["dt"])] + r)
+        self.log_line("Scope capture saved to %s" % fn)
+
     # ------------------------------------------------------------------ step-response helper
     def on_step_kind(self):
         k = STEP_KINDS[self.step_kind.currentIndex()]
@@ -1425,6 +1520,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_calibration(ev[1])
             elif kind == "tune":
                 self.on_tune_result(ev[1])
+            elif kind == "scope_state":
+                self.on_scope_state(ev[1], ev[2])
+            elif kind == "scope":
+                self.on_scope_data(ev[1])
             elif kind == "log":
                 self.log_line("board: " + ev[1])
             elif kind == "disconnected":
@@ -1489,6 +1588,14 @@ class MainWindow(QtWidgets.QMainWindow):
         elif word in ("mode", "tq", "pos"):
             if not ok:
                 self.log_line("%s -> %s" % (cmd, ERR_TEXT.get(reason, reason)))
+        elif word == "tune":
+            if not ok:
+                self.tune_label.setText("Auto-tune refused: " + ERR_TEXT.get(reason, reason))
+                self.set_status("Auto-tune refused: " + ERR_TEXT.get(reason, reason))
+        elif word == "scope":
+            if not ok:
+                self.scope_timer.stop()
+                self.scope_label.setText("Scope: " + reason)
         elif word == "calibrate":
             if not ok:
                 self.cal_label.setText("Calibration refused: " + ERR_TEXT.get(reason, reason))

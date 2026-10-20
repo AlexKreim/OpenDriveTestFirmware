@@ -474,6 +474,22 @@ static void tune_task(void)
     else    uprintf("TUNE,fail,range\r\n");
 }
 
+/* scope dump: one line per main-loop pass, so the protections in slow_task keep running while it is sent */
+static int scope_dump_i = -1, scope_dump_n;
+
+static void scope_task(void)
+{
+    if (scope_dump_i < 0) return;
+    float v[SCOPE_CH];
+    if (scope_dump_i >= scope_dump_n || !motor_scope_get(scope_dump_i, v)) {
+        uprintf("S,end,%d\r\n", scope_dump_i);
+        scope_dump_i = -1;
+        return;
+    }
+    uprintf("S,%d,%s,%s,%s,%s,%s,%s,%s\r\n", scope_dump_i, ff(v[0]), ff(v[1]), ff(v[2]), ff(v[3]), ff(v[4]), ff(v[5]), ff(v[6]));
+    scope_dump_i++;
+}
+
 static void handle_line(char *line)
 {
     char *sv;
@@ -484,7 +500,7 @@ static void handle_line(char *line)
 
     if (!strcmp(cmd, "help")) {
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n"
-                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump | faultlog [clear]\r\n"
+                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump | faultlog [clear] | scope [div|state|stop|dump]\r\n"
                 "set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
@@ -657,6 +673,27 @@ static void handle_line(char *line)
             HAL_Delay(3);
         }
         reply_ok();
+    } else if (!strcmp(cmd, "scope")) {
+        /* scope [div] | scope state | scope stop | scope dump: 2 kHz / div capture of the FOC loops, starts at the next FOC tick
+         * after the alignment (now if FOC is running) */
+        int n = 0;
+        if (a1 && !strcmp(a1, "state")) {
+            static const char *st[] = {"idle", "armed", "capturing", "done"};
+            int s = motor_scope_state(&n);
+            uprintf("S,state,%s,%d\r\n", st[s & 3], n);
+        } else if (a1 && !strcmp(a1, "stop")) {
+            motor_scope_stop();
+        } else if (a1 && !strcmp(a1, "dump")) {
+            motor_scope_stop();
+            motor_scope_state(&n);
+            uprintf("S,count,%d,%d\r\n", n, 500 * motor_scope_div());          /* samples, microseconds per sample */
+            scope_dump_i = 0; scope_dump_n = n;                                 /* the lines follow from scope_task */
+        } else {
+            int div = a1 ? atoi(a1) : 1;
+            if (div < 1 || div > 50) { reply_err("range"); return; }
+            motor_scope_arm(div);
+        }
+        reply_ok();
     } else if (!strcmp(cmd, "focdump")) {
         /* the last 5 ms of FOC data before an overcurrent / encoder / overspeed fault (20 kHz samples) */
         float v[12];
@@ -796,6 +833,7 @@ void esc_app_loop(void)
     stream_task();
     cal_task();
     tune_task();
+    scope_task();
     flog_task(motor_running());
     led_task();
 }

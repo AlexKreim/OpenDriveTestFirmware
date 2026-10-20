@@ -53,6 +53,11 @@ static uint32_t   cal_ms;
 static volatile uint32_t cal_acc[3];
 static volatile uint16_t cal_min[3], cal_max[3];
 
+static float    scope_buf[SCOPE_N][SCOPE_CH];
+static volatile uint16_t scope_n;
+static volatile uint8_t  scope_st;               /* 0 idle, 1 armed, 2 capturing, 3 done */
+static uint8_t  scope_div = 1, scope_cnt;
+
 static float    theta, rpm_cur;
 static uint32_t tick;
 static uint32_t sp_tick;
@@ -215,6 +220,15 @@ static bool foc_tick(const foc_in_t *in)
     g_id = foc.id; g_iq = foc.iq * (float)g_par.enc_dir;      /* torque frame: positive = towards rising sensor angle */ g_vd = foc.vd; g_vq = foc.vq;
     g_iq_ref = foc.iq_ref_t; g_pos_sp = (run_mode == MODE_POSITION) ? foc.pos_sp_deg : -1.0f;
     g_rpm_cmd = foc.rpm_sp; g_rpm_meas = foc.rpm; g_v_ll = 1.7320508f * sqrtf(foc.vd * foc.vd + foc.vq * foc.vq);
+    if ((scope_st == 1u || scope_st == 2u) && foc.phase == FP_RUN && foc.outer_cnt == 0u) {   /* 2 kHz, right after the outer loop */
+        scope_st = 2u;
+        if (++scope_cnt >= scope_div) {
+            scope_cnt = 0;
+            float *r = scope_buf[scope_n];
+            r[0] = foc.rpm; r[1] = foc.rpm_sp; r[2] = g_iq; r[3] = foc.iq_ref_t; r[4] = foc.id; r[5] = foc.vq; r[6] = foc.pos_deg;
+            if (++scope_n >= SCOPE_N) scope_st = 3u;
+        }
+    }
     return true;
 }
 
@@ -507,6 +521,23 @@ bool motor_cal_result(float *r, float *l, int *dir, float *pp, const char **err)
     if (pp) *pp = cal.pp_meas;
     if (err) *err = cal.err;
     return cal_rc > 0;
+}
+
+void motor_scope_arm(int div)
+{
+    scope_st = 0u;
+    scope_n = 0; scope_cnt = 0;
+    scope_div = (uint8_t)(div < 1 ? 1 : (div > 50 ? 50 : div));
+    scope_st = 1u;
+}
+void motor_scope_stop(void) { if (scope_st != 0u) scope_st = 3u; }
+int  motor_scope_state(int *n) { if (n) *n = scope_n; return scope_st; }
+int  motor_scope_div(void) { return scope_div; }
+bool motor_scope_get(int i, float out[SCOPE_CH])
+{
+    if (i < 0 || i >= (int)scope_n || scope_st == 2u) return false;
+    for (int k = 0; k < SCOPE_CH; k++) out[k] = scope_buf[i][k];
+    return true;
 }
 
 bool motor_angle(uint16_t *a) { *a = enc_cached; return enc_cached_ok; }

@@ -59,7 +59,7 @@ in `main.c` and `esc_usb_rx` in `usbd_cdc_if.c`):
 |---|---|
 | `esc_config.h` | Clock, PWM (20 kHz, center-aligned, ARR 4250), dead time, scaling, limits, all `DEF_*` defaults, `FOC_DMAX` 0.90 |
 | `esc_hw.c` | Register-level setup: TIM1, ADC1/2/3 (injected = phase currents, regular = slow channels), op-amps, SPI3, TIM3, GPIO, AS5047P read/pipeline/reset |
-| `esc_motor.c` | 20 kHz control interrupt, state machine (IDLE, PRECHARGE, ALIGN, RUN, FAULT, CALIB), open loop (V/f, sine or 6-step), current conversion, overcurrent (4 samples > `ilim`), FOC glue, FOC log for `focdump` |
+| `esc_motor.c` | 20 kHz control interrupt, state machine (IDLE, PRECHARGE, ALIGN, RUN, FAULT, CALIB), open loop (V/f, sine or 6-step), current conversion, overcurrent (4 samples > `ilim`), FOC glue, FOC log for `focdump`, scope buffer (1000 x 7 floats at 2 kHz / div, filled in `foc_tick` only when armed) |
 | `esc_foc.c` | Hardware-independent FOC (also compiled on the PC): Clarke/Park, dq PI with decoupling and anti-windup, SVPWM (min/max injection), encoder tracking (jump gating + relock), 2 kHz outer loops (tracking observer 80 Hz, speed PI, position profile + PID, overspeed), motor calibration state machine |
 | `esc_app.c` | USB text console, commands, telemetry, temperatures/overtemp, host watchdog, `status`/`diag`/`test`, boot sequence (ADC trigger selection, offsets, flash load) |
 | `esc_faultlog.c` | Fault log: last 8 faults / watchdog stops / abnormal resets, RAM + own flash page 0x0807E000, written by the main loop only while stopped; `faultlog [clear]` |
@@ -92,7 +92,8 @@ Key mechanisms:
 
 Protocol: newline-terminated text. Replies `OK` / `ERR,<reason>`; `P,<name>,<value>`; `N,<preset>`;
 `V,ESC,<fw>,<paramversion>,<count>`; telemetry `T,` with 22 fields (see `GUI/protocol.py`); `CAL,ok,<R_ll mOhm>,<L_ll uH>,<dir>,<pp>`
-or `CAL,fail,<reason>`; `TUNE,ok,<J gcm2>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`.
+or `CAL,fail,<reason>`; `TUNE,ok,<J gcm2>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`; `scope dump` lines
+`S,count,<n>,<us>`, `S,<i>,rpm,rpm_sp,iq,iq_ref,id,vq,pos`, `S,end,<n>`; `faultlog` lines `L,count,<n>,boot,<b>`, `L,<i>,...`.
 Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / float printf).
 
 ## 5. GUI (`GUI/`)

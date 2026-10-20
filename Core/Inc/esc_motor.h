@@ -51,6 +51,15 @@ bool  motor_cal_result(float *r_phase_ohm, float *l_phase_h, int *enc_dir, float
 bool  motor_tune_start(void);
 int   motor_tune_status(void);              /* 0 = running / not started, 1 = finished ok, -1 = failed */
 bool  motor_tune_result(float bw_hz, float *j_kgm2, float *tf_nm, float *spd_kp, float *spd_ki, float *pos_kp, const char **err);
+/* scope: SCOPE_N samples of the FOC outer loop (2 kHz / div), starting at the next FOC tick after the alignment.
+ * Channels: rpm, rpm set point, iq, iq reference (torque frame), id, vq (torque frame), position deg. Diagnostics only. */
+#define SCOPE_N  1000
+#define SCOPE_CH 7
+void  motor_scope_arm(int div);
+void  motor_scope_stop(void);              /* end a capture early (the samples so far stay readable) */
+int   motor_scope_state(int *n);           /* 0 idle, 1 armed, 2 capturing, 3 done */
+bool  motor_scope_get(int i, float out[SCOPE_CH]);
+int   motor_scope_div(void);
 bool  motor_angle(uint16_t *a);             /* last angle read by the control interrupt (valid while FOC / calibration runs) */
 bool  motor_foc_active(void);
 int   motor_foc_log_count(void);            /* FOC samples kept for the last fault (diagnostics) */

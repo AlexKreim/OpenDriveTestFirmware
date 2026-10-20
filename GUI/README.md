@@ -267,6 +267,12 @@ with Kt = 8.27 / Kv. For the speed-loop bandwidth `bw` (default 5 Hz, 1–20 Hz,
 RAM; the GUI stores them in the current preset and writes them to flash. Run it with the real load, free to rotate. Stop, a fault
 or the host watchdog end the test like a normal run. *Not tested on hardware yet.*
 
+The **scope** (Tuning tab, `scope [div]`) records 1000 samples of the FOC loops inside the firmware at 2 kHz / `div`
+(0.5 s at div 1, up to 25 s): speed, speed set point, Iq, Iq reference, Id, Vq and position. It starts at the next FOC run after
+the alignment, or immediately if FOC is running, and works with the step helper and the auto-tune. The GUI polls `scope state`
+and reads the result with `scope dump` (`S,count,<n>,<us per sample>`, `S,<i>,rpm,rpm_sp,iq,iq_ref,id,vq,pos`, `S,end,<n>`; the
+lines are sent one per main-loop pass so the protections keep running). *Save CSV...* stores it.
+
 The **step-response helper** (Tuning tab) alternates the set point between two values
 and reports rise time, overshoot and settling time.
 
@@ -386,6 +392,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `tune [bw_hz]` | Speed/position gain auto-tune (section 9) → `TUNE,ok,...` or `TUNE,fail,<reason>` |
 | `calibrate` | Motor calibration → `CAL,ok,<R_ll mΩ>,<L_ll µH>,<dir>,<pp>` or `CAL,fail,<reason>` |
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |
+| `scope [div]`, `scope state\|stop\|dump` | 2 kHz capture of the FOC loops (section 9) |
 | `faultlog [clear]` | Fault log (section 10): `L,count,<n>,boot,<b>` then `L,<i>,...` lines |
 | `stream <hz>` | Telemetry `T,...` lines (22 fields, see `protocol.py`) |
 | `wd <ms>`, `ping` | Host watchdog |

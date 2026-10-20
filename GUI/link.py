@@ -11,7 +11,7 @@ try:
 except ImportError:          # the GUI shows a clear message; tests inject their own serial factory
     serial = None
 
-REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune"}
+REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune", "scope", "faultlog"}
 PENDING_TIMEOUT_S = 2.0
 
 
@@ -22,6 +22,8 @@ class EscLink:
          ("ack", cmd, ok, message)      reply to a command ("OK" or "ERR,reason"; ok None = no reply in time)
          ("version", dict)              reply to "ver"
          ("calibration", dict)          result of "calibrate": {ok, r_ll_mohm, l_ll_uh, enc_dir, pp} or {ok False, reason}
+         ("scope_state", state, n)      reply to "scope state" (idle / armed / capturing / done, samples so far)
+         ("scope", dict)                complete "scope dump": {dt (s per sample), rows [[rpm, rpm_sp, iq, iq_ref, id, vq, pos], ...]}
          ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
@@ -37,6 +39,7 @@ class EscLink:
         self._pending = collections.deque()      # (cmd, time) waiting for OK/ERR
         self._plock = threading.Lock()
         self._params = {}
+        self._scope = None                       # (dt, rows) while a scope dump arrives
 
     @staticmethod
     def _default_factory(port):
@@ -160,6 +163,24 @@ class EscLink:
                     return
                 except ValueError:
                     pass
+            self.events.put(("log", line))
+            return
+        if line.startswith("S,"):
+            f = line.split(",")
+            try:
+                if f[1] == "state" and len(f) >= 4:
+                    self.events.put(("scope_state", f[2], int(f[3])))
+                elif f[1] == "count" and len(f) >= 4:
+                    self._scope = (int(f[3]) * 1e-6, [])
+                elif f[1] == "end":
+                    if self._scope is not None:
+                        self.events.put(("scope", {"dt": self._scope[0], "rows": self._scope[1]}))
+                    self._scope = None
+                elif self._scope is not None and len(f) >= 9:
+                    self._scope[1].append([float(x) for x in f[2:9]])
+                return
+            except (ValueError, IndexError):
+                pass
             self.events.put(("log", line))
             return
         if line.startswith("TUNE,"):
