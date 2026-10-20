@@ -906,6 +906,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self.link.open(port)
+            self.last_telem_mono = None
+            self.telem_lost = False
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, APP_TITLE, "Could not open %s:\n%s" % (port, e))
             return
@@ -933,9 +935,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_line(message)
         self.update_enabled()
 
+    TELEMETRY_TIMEOUT_S = 1.0
+
     def send_ping(self):
-        if self.connected():
-            self.link.send("ping")
+        """Every 200 ms. While the motor runs and no telemetry came for 1 s, the link is not healthy: send 'stop' and
+        withhold the pings, so the board's host watchdog stops the motor even if the 'stop' is lost."""
+        if not self.connected():
+            return
+        last = getattr(self, "last_telem_mono", None)
+        stale = last is not None and (time.monotonic() - last) > self.TELEMETRY_TIMEOUT_S
+        if stale and self.running():
+            if not getattr(self, "telem_lost", False):
+                self.telem_lost = True
+                self.link.send("stop")
+                self.log_line("No telemetry from the board for %.1f s while running: sent STOP and stopped the keep-alive pings."
+                              % self.TELEMETRY_TIMEOUT_S)
+                self.set_status("Connection problem: no data from the board, motor stop requested.")
+            return
+        self.link.send("ping")
 
     def apply_rate(self):
         if not self.connected():
@@ -1706,6 +1723,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.update_enabled()
 
     def on_telemetry(self, s):
+        self.last_telem_mono = time.monotonic()
+        if getattr(self, "telem_lost", False):
+            self.telem_lost = False
+            self.log_line("Telemetry is back.")
         if self.last_t is not None and s["t"] < self.last_t - 0.5:       # board rebooted: its clock restarted
             self.clear_buffers()
         self.last_t = s["t"]

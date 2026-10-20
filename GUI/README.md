@@ -318,7 +318,7 @@ The header `L,count,<n>,boot,<b>,flash,<none|ok|fail|pending>` gives the number 
 **USB send stuck**: if the board cannot send for 500 ms while the motor runs (PC program frozen and not reading the port), the motor is stopped (*last stop* and fault log: *USB send stuck*). After 3 s stuck while stopped the board disconnects and reconnects USB, so the COM port comes back without a power cycle.
 
 **Host watchdog**: the GUI pings the board every 200 ms and sets `wd 3000`. If nothing arrives for 3 s the motor is stopped and
-`INFO: motor stopped by the host watchdog` is printed. Closing the GUI or disconnecting sends STOP.
+`INFO: motor stopped by the host watchdog` is printed. Closing the GUI or disconnecting sends STOP. If the GUI receives no telemetry for 1 s while the motor runs, it sends STOP and stops the pings, so the board's watchdog stops the motor even if that STOP is lost (long blocking commands such as `focdump` while running can trigger this).
 
 **Diagnostics commands**
 
