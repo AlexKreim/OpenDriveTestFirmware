@@ -104,6 +104,7 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
   `presets.py` + `presets/*.json` (user presets in `%APPDATA%\ESC_Control\presets`), `preset_dialog.py`, `stepmetrics.py`.
 - Bottom of the window: log + command line (`on_console_send`, any firmware command, history in an editable combo box).
   Tuning tab also has the auto-tune button and the scope; Motor & Advanced has Status / Fault log / Self test buttons.
+- `WheelGuard` (app-wide event filter in `main()`): the mouse wheel changes spin/combo/slider/dial only when focused.
 - Torque mode starts at 0 by design (the set point is reset at start/stop).
 - Run: `run.bat` (creates `.venv`). Exe: `build_exe.bat` (PyInstaller).
 

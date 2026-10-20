@@ -1888,8 +1888,28 @@ class MainWindow(QtWidgets.QMainWindow):
         event.accept()
 
 
+class WheelGuard(QtCore.QObject):
+    """Application-wide: the mouse wheel changes spin boxes, combo boxes, sliders and dials only after they were clicked
+    (have the focus). Otherwise the wheel event goes on to the scroll area, so scrolling never changes a value by accident.
+    Also covers widgets created later (preset dialog)."""
+    TYPES = (QtWidgets.QAbstractSpinBox, QtWidgets.QComboBox, QtWidgets.QAbstractSlider)
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        if t == QtCore.QEvent.Type.Polish and isinstance(obj, self.TYPES):
+            obj.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)          # the wheel alone must not give them the focus
+        elif t == QtCore.QEvent.Type.Wheel and isinstance(obj, QtWidgets.QWidget):
+            w = obj if isinstance(obj, self.TYPES) else obj.parentWidget()  # e.g. the line edit inside a spin box
+            if isinstance(w, self.TYPES) and not w.hasFocus():
+                ev.ignore()
+                return True              # not handled: Qt passes the ignored event on to the parent (scrolls the page)
+        return False
+
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    wheel_guard = WheelGuard(app)
+    app.installEventFilter(wheel_guard)
     pg.setConfigOptions(antialias=False)
     win = MainWindow()
     win.resize(1450, 920)
