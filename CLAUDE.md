@@ -125,16 +125,42 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
 
 | Motor | pp | R line-line | L line-line | Kv | Notes |
 |---|---|---|---|---|---|
-| DJI 2212 920KV (Phantom 1), current test motor | 7 | ~120-150 mOhm | ~40-54 uH (profiler) | 920 | Speed Kp 0.01 / Ki 0.3 worked; low-speed (60 rpm) FOC showed stick-slip once per electrical turn (may relate to current offsets or the older trigger path) |
+| DJI 2212 920KV (Phantom 1), current test motor | 7 | ~120-150 mOhm | ~40-54 uH (profiler) | 920 | Speed Kp 0.01 / Ki 0.3 worked; auto-tune J 53 g cm^2; sticks once per mechanical rev at low speed (section 8) |
 | ODrive M8325s 100KV | 20 | 48 mOhm | 19.8 uH | 100 | Kt 0.083, defaults tuned for it |
 | "BLDC Schwarz" | 7 | - | - | - | **Shorted phase, do not use** |
 
 The calibration's inductance (5 kHz voltage dither) read about 5x below the ST profiler value; it was measured on the damaged
 motor, so re-check on the 2212 before trusting or fixing the method.
 
-## 8. Open issues / ideas
+## 8. Board results 2026-10-20 (healthy DJI 2212, build with auto-tune/fault log/scope)
 
-1. Verify the hardware ADC trigger on the board (`status`, `diag`); if it works, the software-fallback guards stop mattering.
-2. Re-check low-speed FOC smoothness and the calibration's L on the healthy motor.
-3. ABI encoder count is 0. Since 2026-10-20 `g_enc_cpr` comes from the AS5047P SETTINGS1/2 (`hw_enc_detect`), `test`/`enc`/`status` show settings, pins, measured counts/rev and ABI speed (untested). If pins never toggle: wiring. Keep ABI out of FOC.
-4. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.
+- `test`: CC6905 and motor NTC not fitted (their checks are meaningless; CC6905 may read "OK" by chance). AS5047P: MAGL=1,
+  AGC 255 = magnet field too weak. `raw` idle A/B/C 1338/1341/1310, spread 1-6 counts.
+- `status`: current trigger **hardware (TRGO2)** works, 0 rejected/late samples, control interrupt max 18 us.
+- ABI works now: SPI-ABI offset constant ~14.6 deg (fine, no index used), traces correlate.
+- Calibration (2nd try, 1st failed): R_ll 365.9 mOhm (expected ~120-150, maybe wiring/FETs), L_ll 20.6 uH (profiler not run yet).
+- Auto-tune: imax 10 A -> overspeed fault, 1 A -> motor did not move (0.5 A < breakaway), **5 A worked**: J 53.2 g cm^2,
+  friction 2.36 mNm, at 5 Hz spdkp 0.00195, spdki 0.01529, poskp 1.309 (stored in preset 'BLDCPhantom').
+  Idea not done yet: separate test current `tune [bw] [A]` so imax need not change.
+- Scope 700 rpm (`GUI/scope.csv` on the desktop PC, gitignored): Iq ~0.13 A, speed ripple 13 rpm 1x/rev + 9 rpm 2x/rev with little Iq reaction -> mostly
+  encoder angle error (~1 deg mech), consistent with the weak magnet. Not the low-speed problem.
+- **Low-speed sticking** (scope `GUI/60rpm.csv`, desktop PC only): rotor always sticks at the SAME mechanical angle (~48 deg sensor), Iq ramps to
+  ~0.8-0.9 A, breaks free, overshoots to 150-400 rpm, does exactly one revolution, sticks there again. Once per mechanical rev
+  -> most likely mechanical (rubbing / bearing / magnet holder) rather than cogging or current offsets. Torque mode 0.3 A starts
+  only from 1-2 positions. Next: turn by hand unpowered and feel for a tight spot; check magnet mount.
+- **Crashes**: twice the GUI froze (after saving a scope CSV; once at 5000 rpm), the motor kept running, reconnect failed until a
+  power cycle. Suspected: USB CDC send stuck while the GUI still pinged. Added (untested): main-loop IWDG, USB-send-stuck stop +
+  USB reconnect, GUI telemetry timeout. Ask the owner for fault log, `status` (last stop, last MCU reset) after the next one.
+- Fault log showed `L,count,0,boot,1` (never written) even after the overspeed; pending owner test: `set otdrv 20` -> overtemp
+  in idle -> Refresh fault log -> header `flash,ok|fail` -> `set otdrv 80`, `clear`.
+
+## 9. Open issues / ideas
+
+1. Crash / USB root cause (see section 8); check that the new protections trigger.
+2. Low-speed sticking at one mechanical angle (section 8); the calibration's R and L on the 2212.
+3. Weak AS5047P magnet field (MAGL).
+4. Owner wants cogging/offset compensation (Iq feed-forward vs angle) soon, not yet. On hold: bus-current/regen limit,
+   bring-up wizard, offset sanity check at start, field weakening.
+5. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.
+6. Dev PC has no host gcc (FOC sim and GUI tests not run); `pacman -S mingw-w64-ucrt-x86_64-gcc` in MSYS2. GUI venv: `GUI/.venv`.
+   Only `GUI/README.md` exists (no root copy).
