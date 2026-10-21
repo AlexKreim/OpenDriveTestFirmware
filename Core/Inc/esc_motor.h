@@ -60,6 +60,13 @@ void  motor_scope_stop(void);              /* end a capture early (the samples s
 int   motor_scope_state(int *n);           /* 0 idle, 1 armed, 2 capturing, 3 done */
 bool  motor_scope_get(int i, float out[SCOPE_CH]);
 int   motor_scope_div(void);
+/* ADC code histogram (diagnostics): counts the lowest 5 bits of every phase-current conversion while the motor is driven
+ * (ALIGN / RUN / CALIB). Even ADC codes give about 3.1 % per bin; a large bin 31 means codes stick just below 32-count steps. */
+void     motor_adc_hist_start(void);       /* clears and starts counting */
+void     motor_adc_hist_stop(void);
+bool     motor_adc_hist_on(void);
+uint32_t motor_adc_hist_n(void);           /* samples counted */
+uint32_t motor_adc_hist_get(int ph, int bin);
 bool  motor_angle(uint16_t *a);             /* last angle read by the control interrupt (valid while FOC / calibration runs) */
 bool  motor_foc_active(void);
 int   motor_foc_log_count(void);            /* FOC samples kept for the last fault (diagnostics) */

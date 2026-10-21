@@ -545,9 +545,11 @@ static void handle_line(char *line)
     char *a2 = strtok_r(NULL, " \t", &sv);
 
     if (!strcmp(cmd, "help")) {
-        uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n"
-                "mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz] | focdump | faultlog [clear] | scope [div|state|stop|dump]\r\n"
-                "set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
+        /* one line per call: uprintf's buffer holds 255 characters */
+        uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n");
+        uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz]\r\n");
+        uprintf("focdump | faultlog [clear] | adchist [start|stop] | scope [div|state|stop|dump]\r\n");
+        uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
     } else if (!strcmp(cmd, "led")) {
@@ -740,6 +742,29 @@ static void handle_line(char *line)
             int div = a1 ? atoi(a1) : 1;
             if (div < 1 || div > 50) { reply_err("range"); return; }
             motor_scope_arm(div);
+        }
+        reply_ok();
+    } else if (!strcmp(cmd, "adchist")) {
+        /* adchist start | stop | (no argument: print). Lowest 5 bits of the phase-current ADC codes while the motor is driven. */
+        if (a1 && !strcmp(a1, "start")) { motor_adc_hist_start(); reply_ok(); return; }
+        if (a1 && !strcmp(a1, "stop"))  { motor_adc_hist_stop();  reply_ok(); return; }
+        uint32_t n = motor_adc_hist_n();
+        uprintf("H,n,%lu,%s (even codes: 3.1 %% per bin)\r\n", (unsigned long)n, motor_adc_hist_on() ? "counting" : "stopped");
+        for (int ph = 0; ph < 3; ph++) {
+            uint32_t mx = 0; int mxb = 0;
+            for (int b = 0; b < 32; b++) { uint32_t c = motor_adc_hist_get(ph, b); if (c > mx) { mx = c; mxb = b; } }
+            float k = n ? 100.0f / (float)n : 0.0f;
+            uprintf("H,%c,bin31 %s %%,bin0 %s %%,largest bin %d %s %%\r\n", 'A' + ph, ff(k * (float)motor_adc_hist_get(ph, 31)),
+                    ff(k * (float)motor_adc_hist_get(ph, 0)), mxb, ff(k * (float)mx));
+            for (int h = 0; h < 2; h++) {
+                uint32_t c[16];
+                for (int b = 0; b < 16; b++) c[b] = motor_adc_hist_get(ph, h * 16 + b);
+                uprintf("H,%c,%d-%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n", 'A' + ph, h * 16, h * 16 + 15,
+                        (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2], (unsigned long)c[3], (unsigned long)c[4],
+                        (unsigned long)c[5], (unsigned long)c[6], (unsigned long)c[7], (unsigned long)c[8], (unsigned long)c[9],
+                        (unsigned long)c[10], (unsigned long)c[11], (unsigned long)c[12], (unsigned long)c[13], (unsigned long)c[14],
+                        (unsigned long)c[15]);
+            }
         }
         reply_ok();
     } else if (!strcmp(cmd, "focdump")) {

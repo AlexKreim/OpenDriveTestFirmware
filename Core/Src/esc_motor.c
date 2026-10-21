@@ -58,6 +58,10 @@ static volatile uint16_t scope_n;
 static volatile uint8_t  scope_st;               /* 0 idle, 1 armed, 2 capturing, 3 done */
 static uint8_t  scope_div = 1, scope_cnt;
 
+static volatile bool     adc_hist_on;
+static volatile uint32_t adc_hist[3][32];
+static volatile uint32_t adc_hist_n;
+
 static float    theta, rpm_cur;
 static uint32_t tick;
 static uint32_t sp_tick;
@@ -299,6 +303,13 @@ static void control_isr(void)
     uint16_t r[3];
     if (!hw_inj_collect(r)) return;
     g_raw[0] = r[0]; g_raw[1] = r[1]; g_raw[2] = r[2];
+    if (adc_hist_on) {
+        esc_state_t hs = g_state;
+        if (hs == ST_ALIGN || hs == ST_RUN || hs == ST_CALIB) {
+            adc_hist[0][r[0] & 31u]++; adc_hist[1][r[1] & 31u]++; adc_hist[2][r[2] & 31u]++;
+            adc_hist_n++;
+        }
+    }
 
     if (cal_n < CAL_N) {
         for (int i = 0; i < 3; i++) {
@@ -522,6 +533,18 @@ bool motor_cal_result(float *r, float *l, int *dir, float *pp, const char **err)
     if (err) *err = cal.err;
     return cal_rc > 0;
 }
+
+void motor_adc_hist_start(void)
+{
+    adc_hist_on = false;
+    for (int i = 0; i < 3; i++) for (int b = 0; b < 32; b++) adc_hist[i][b] = 0;
+    adc_hist_n = 0;
+    adc_hist_on = true;
+}
+void     motor_adc_hist_stop(void) { adc_hist_on = false; }
+bool     motor_adc_hist_on(void) { return adc_hist_on; }
+uint32_t motor_adc_hist_n(void) { return adc_hist_n; }
+uint32_t motor_adc_hist_get(int ph, int bin) { return (ph >= 0 && ph < 3 && bin >= 0 && bin < 32) ? adc_hist[ph][bin] : 0u; }
 
 void motor_scope_arm(int div)
 {
