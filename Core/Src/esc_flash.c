@@ -3,8 +3,8 @@
 #include <string.h>
 
 /* minimum interval (ms) and maximum writes per boot for each page */
-static const uint32_t guard_min_ms[FLASH_PG_N]  = { 500u, 10000u, 500u };
-static const uint32_t guard_max_n[FLASH_PG_N]   = { 100u, 50u, 50u };
+static const uint32_t guard_min_ms[FLASH_PG_N]  = { 500u, 10000u, 500u, 500u };
+static const uint32_t guard_max_n[FLASH_PG_N]   = { 100u, 50u, 50u, 20u };
 static uint32_t guard_last[FLASH_PG_N];
 static uint32_t guard_n[FLASH_PG_N];
 
@@ -99,4 +99,56 @@ flash_res_t flash_save_offsets(const float off[3])
     img.cal_valid = true;
     memcpy(img.cs_offset, off, sizeof(img.cs_offset));
     return write_image(&img);
+}
+
+/* ------------------------------------------------------------------ anti-cogging map */
+#define COG_MAGIC 0x434F4731u            /* "COG1" */
+typedef struct { uint32_t magic; uint16_t n; uint8_t enabled; uint8_t pad; uint32_t crc; uint32_t res; } cog_hdr_t;
+
+bool flash_cog_load(int16_t *map, uint32_t n, bool *enabled)
+{
+    const cog_hdr_t *h = (const cog_hdr_t *)COG_FLASH_ADDR;
+    const int16_t *d = (const int16_t *)(COG_FLASH_ADDR + sizeof(cog_hdr_t));
+    if (h->magic != COG_MAGIC || h->n != n || params_crc32(d, n * sizeof(int16_t)) != h->crc) return false;
+    memcpy(map, d, n * sizeof(int16_t));
+    *enabled = h->enabled != 0u;
+    return true;
+}
+
+/* Dual-bank (default): 2 KB pages, 0x0807A000 = bank 2 page 116, 5 pages. Single-bank: 4 KB page 122, 3 pages. */
+flash_res_t flash_cog_save(const int16_t *map, uint32_t n, bool enabled)
+{
+    cog_hdr_t h;
+    memset(&h, 0, sizeof(h));
+    h.magic = COG_MAGIC; h.n = (uint16_t)n; h.enabled = enabled ? 1u : 0u;
+    h.crc = params_crc32(map, n * sizeof(int16_t));
+    if (!flash_guard(FLASH_PG_COG)) return FLASH_RES_LIMIT;
+    HAL_FLASH_Unlock();
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+    FLASH_EraseInitTypeDef er;
+    uint32_t page_error = 0;
+    memset(&er, 0, sizeof(er));
+    er.TypeErase = FLASH_TYPEERASE_PAGES;
+    bool dual = (FLASH->OPTR & FLASH_OPTR_DBANK) != 0u;
+    er.Banks   = dual ? FLASH_BANK_2 : FLASH_BANK_1;
+    er.Page    = dual ? 116u : 122u;
+    er.NbPages = dual ? 5u : 3u;
+    if (HAL_FLASHEx_Erase(&er, &page_error) != HAL_OK) { HAL_FLASH_Lock(); return FLASH_RES_ERASE; }
+    uint32_t addr = COG_FLASH_ADDR;
+    const uint8_t *src = (const uint8_t *)&h;
+    for (uint32_t i = 0; i < sizeof(h); i += 8, addr += 8) {
+        uint64_t dw;
+        memcpy(&dw, src + i, 8);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr, dw) != HAL_OK) { HAL_FLASH_Lock(); return FLASH_RES_PROGRAM; }
+    }
+    src = (const uint8_t *)map;
+    for (uint32_t i = 0; i < n * sizeof(int16_t); i += 8, addr += 8) {
+        uint64_t dw;
+        memcpy(&dw, src + i, 8);
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr, dw) != HAL_OK) { HAL_FLASH_Lock(); return FLASH_RES_PROGRAM; }
+    }
+    HAL_FLASH_Lock();
+    bool ok = memcmp((const void *)COG_FLASH_ADDR, &h, sizeof(h)) == 0 &&
+              memcmp((const void *)(COG_FLASH_ADDR + sizeof(h)), map, n * sizeof(int16_t)) == 0;
+    return ok ? FLASH_RES_OK : FLASH_RES_VERIFY;
 }

@@ -211,6 +211,7 @@ bool foc_step(foc_t *f, const foc_in_t *in, const foc_cmd_t *cmd, const esc_para
                 f->rpm_sp = clampf(p->pos_kp * pe + f->pos_int + p->pos_kd * ed + f->v_sp / 6.0f, -rlim, rlim);
                 icmd = speed_pi(f, p, f->rpm_sp, f->rpm, imax);
             }
+            if (f->mode != FM_TORQUE) icmd = clampf(icmd + cmd->iq_ff, -imax, imax);    /* anti-cogging feed-forward */
             f->iq_ref = dir * icmd;
             f->id_ref = 0.0f;
             if (fabsf(f->rpm) > 1.5f * rlim + 50.0f) { if (++f->ovs >= 6u) { f->fault = FF_OVERSPEED; return false; } }   /* 3 ms in a row: ignores single bad samples */
@@ -487,4 +488,128 @@ void foc_tune_gains(const foc_tune_t *t, float bw_hz, float *spd_kp, float *spd_
     *spd_kp = kp;
     *spd_ki = kp * w * 0.25f;                                          /* PI zero at a quarter of the crossover */
     *pos_kp = w / 24.0f;                                               /* position bandwidth w/4; 1 rpm = 6 deg/s */
+}
+
+/* ================================================================== anti-cogging map */
+enum { CG_HOLD0 = 0, CG_FWD, CG_HOLD1, CG_REV, CG_DONE };
+
+#define CG_LEAD_DEG   10.0f                    /* lead-in / lead-out around the recorded turn */
+#define CG_HOLD0_S    1.0f
+#define CG_HOLD1_S    0.5f
+#define CG_ERR_DEG    20.0f                    /* position error that means the shaft does not follow */
+#define CG_CONV_CHUNK 16u                      /* bins converted per control cycle during the pause (4096 in 13 ms) */
+
+void foc_cog_begin(foc_cog_t *c, float s_per_turn, float *sum, uint16_t *cnt, int16_t *map)
+{
+    memset(c, 0, sizeof(*c));
+    c->sum = sum; c->cnt = cnt; c->map = map;
+    c->v_dps = 360.0f / clampf(s_per_turn, 10.0f, 600.0f);
+    memset(sum, 0, COG_N * sizeof(float));
+    memset(cnt, 0, COG_N * sizeof(uint16_t));
+    c->step = -1;                                                        /* p0 is taken at the first call in FP_RUN */
+}
+
+static int cog_fail(foc_cog_t *c, const char *why) { c->err = why; c->step = CG_DONE; return -1; }
+
+int foc_cog_step(foc_cog_t *c, const foc_t *f, float dt)
+{
+    if (c->err) return -1;
+    if (c->step == CG_DONE) return 1;
+    float pm = (float)f->pos_cnt * DEG_PER_CNT;                          /* measured, FOC frame */
+    if (f->phase != FP_RUN) { c->p_cmd = pm; return 0; }               /* alignment of the normal FOC start */
+    if (c->step < 0) { c->p0 = c->p_cmd = pm; c->step = CG_HOLD0; c->t = 0.0f; }
+    c->t += (dt > 0.0f) ? dt : TS;
+    if (fabsf(c->p_cmd - pm) > CG_ERR_DEG) return cog_fail(c, "not_following");
+    bool rec = (f->outer_cnt == 0u);                                     /* the loop output was just updated (2 kHz) */
+    float rel = pm - c->p0;
+    bool in_turn = (rel >= CG_LEAD_DEG && rel < CG_LEAD_DEG + 360.0f);
+    uint32_t bin = ((uint32_t)f->enc_prev & 0x3FFFu) >> COG_SHIFT;
+    const float p_end = c->p0 + 360.0f + 2.0f * CG_LEAD_DEG;
+
+    switch (c->step) {
+    case CG_HOLD0:
+        if (c->t >= CG_HOLD0_S) { c->step = CG_FWD; c->t = 0.0f; }
+        return 0;
+    case CG_FWD:
+        c->p_cmd = c->p0 + c->v_dps * c->t;
+        if (rec && in_turn && c->cnt[bin] < 0xFFFFu) { c->sum[bin] += f->iq_ref_t; c->cnt[bin]++; }
+        if (c->p_cmd >= p_end) { c->p_cmd = p_end; c->step = CG_HOLD1; c->t = 0.0f; c->conv_i = 0; }
+        return 0;
+    case CG_HOLD1:
+        /* forward means -> map (mA); the buffers are then reused for the backward sweep */
+        for (uint32_t k = 0; k < CG_CONV_CHUNK && c->conv_i < COG_N; k++, c->conv_i++) {
+            uint32_t i = c->conv_i;
+            if (c->cnt[i]) {
+                float m = c->sum[i] / (float)c->cnt[i];
+                c->map[i] = (int16_t)clampf(m * 1000.0f, -32000.0f, 32000.0f);
+                c->sum_f += m; c->nb_f++;
+            } else c->map[i] = COG_EMPTY;
+            c->sum[i] = 0.0f; c->cnt[i] = 0;
+        }
+        if (c->conv_i >= COG_N && c->t >= CG_HOLD1_S) { c->step = CG_REV; c->t = 0.0f; }
+        return 0;
+    case CG_REV:
+        c->p_cmd = p_end - c->v_dps * c->t;
+        if (rec && in_turn && c->cnt[bin] < 0xFFFFu) { c->sum[bin] += f->iq_ref_t; c->cnt[bin]++; }
+        if (c->p_cmd <= c->p0) { c->p_cmd = c->p0; c->step = CG_DONE; return 1; }
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+bool foc_cog_finish(foc_cog_t *c)
+{
+    if (c->err) return false;
+    /* average of the forward and backward mean per bin; a bin seen in one direction only uses that one */
+    float tot = 0.0f;
+    uint32_t nt = 0;
+    for (uint32_t i = 0; i < COG_N; i++) {
+        bool hf = (c->map[i] != COG_EMPTY), hr = (c->cnt[i] != 0u);
+        float r = hr ? c->sum[i] / (float)c->cnt[i] : 0.0f;
+        if (hr) { c->sum_r += r; c->nb_r++; }
+        float v;
+        if (hf && hr) v = 0.5f * (0.001f * (float)c->map[i] + r);
+        else if (hf)  v = 0.001f * (float)c->map[i];
+        else if (hr)  v = r;
+        else { c->sum[i] = NAN; continue; }
+        c->sum[i] = v;                                                   /* A, the buffer is reused */
+        tot += v; nt++;
+    }
+    c->empty = COG_N - nt;
+    if (nt < (COG_N * 9u) / 10u || c->nb_f == 0u || c->nb_r == 0u) { c->err = "coverage"; return false; }
+    c->fric_a = 0.5f * (c->sum_f / (float)c->nb_f - c->sum_r / (float)c->nb_r);
+    float mean = tot / (float)nt;
+    /* gaps: linear between the nearest valid bins (circular) */
+    for (uint32_t i = 0; i < COG_N; i++) {
+        if (!isnan(c->sum[i])) continue;
+        uint32_t a = i, b = i, da = 0, db = 0;
+        do { a = (a + COG_N - 1u) % COG_N; da++; } while (isnan(c->sum[a]));
+        do { b = (b + 1u) % COG_N; db++; } while (isnan(c->sum[b]));
+        c->sum[i] = c->sum[a] + (c->sum[b] - c->sum[a]) * (float)da / (float)(da + db);
+    }
+    /* 3-tap smoothing (0.26 deg), mean removed, to mA */
+    float mx = -1.0e9f, mn = 1.0e9f, sq = 0.0f;
+    float first = c->sum[0], prev = c->sum[COG_N - 1u];
+    for (uint32_t i = 0; i < COG_N; i++) {
+        float cur = c->sum[i];
+        float nxt = (i + 1u < COG_N) ? c->sum[i + 1u] : first;
+        float v = (0.25f * prev + 0.5f * cur + 0.25f * nxt) - mean;
+        prev = cur;
+        c->map[i] = (int16_t)clampf(v * 1000.0f, -32000.0f, 32000.0f);
+        if (v > mx) mx = v;
+        if (v < mn) mn = v;
+        sq += v * v;
+    }
+    c->pp_ma  = (mx - mn) * 1000.0f;
+    c->rms_ma = sqrtf(sq / (float)COG_N) * 1000.0f;
+    return true;
+}
+
+float foc_cog_lookup(const int16_t *map, uint16_t enc)
+{
+    uint32_t e = (uint32_t)enc & 0x3FFFu;
+    uint32_t i = e >> COG_SHIFT, j = (i + 1u) & (COG_N - 1u);
+    float fr = (float)(e & ((1u << COG_SHIFT) - 1u)) * (1.0f / (float)(1u << COG_SHIFT));
+    return 0.001f * ((float)map[i] + (float)(map[j] - map[i]) * fr);
 }

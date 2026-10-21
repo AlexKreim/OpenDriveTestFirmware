@@ -586,6 +586,38 @@ class MainWindow(QtWidgets.QMainWindow):
         gl.addWidget(self.tune_label)
         lay.addWidget(g)
 
+        g = QtWidgets.QGroupBox("Anti-cogging")
+        gl = QtWidgets.QVBoxLayout(g)
+        t = QtWidgets.QLabel("Position mode moves the shaft one turn forward and back very slowly and records the current needed at "
+                             "every angle. That map is then added as torque feed-forward in speed and position mode. Run it unloaded, "
+                             "after the calibration and the auto-tune. The map is stored on the board (not in the preset).")
+        t.setWordWrap(True)
+        gl.addWidget(t)
+        row = QtWidgets.QHBoxLayout()
+        self.cog_time = QtWidgets.QSpinBox()
+        self.cog_time.setRange(10, 600)
+        self.cog_time.setValue(60)
+        self.cog_time.setSuffix(" s / turn")
+        self.cog_time.setToolTip("Time for one turn in each direction. Slower = more samples per angle, less disturbance.")
+        row.addWidget(self.cog_time)
+        self.btn_cog = QtWidgets.QPushButton("Measure cogging map")
+        self.btn_cog.clicked.connect(lambda _=False: self.on_cog_run())
+        row.addWidget(self.btn_cog, 1)
+        gl.addLayout(row)
+        row = QtWidgets.QHBoxLayout()
+        self.chk_cog = QtWidgets.QCheckBox("Compensation on")
+        self.chk_cog.toggled.connect(lambda b: self.link.send("cog on" if b else "cog off") if self.connected() else None)
+        row.addWidget(self.chk_cog)
+        b = QtWidgets.QPushButton("Save on/off to board")
+        b.clicked.connect(lambda _=False: self.link.send("cog save") if self.connected() else None)
+        row.addWidget(b)
+        row.addStretch(1)
+        gl.addLayout(row)
+        self.cog_label = QtWidgets.QLabel("")
+        self.cog_label.setWordWrap(True)
+        gl.addWidget(self.cog_label)
+        lay.addWidget(g)
+
         g = QtWidgets.QGroupBox("Speed loop (PI)")
         form = QtWidgets.QFormLayout(g)
         for n in ("spdkp", "spdki"):
@@ -998,7 +1030,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.state, self.fault, self.cur_rate = P.ST_IDLE, 0, None
         self.dirty = False
         self.btn_connect.setText("Disconnect")
-        for c in ("stream 0", "ver", "wd 3000", "get", "canget"):
+        for c in ("stream 0", "ver", "wd 3000", "get", "canget", "cog"):
             self.link.send(c)
         self.apply_rate()
         self.heartbeat.start()
@@ -1521,6 +1553,50 @@ class MainWindow(QtWidgets.QMainWindow):
             self.link.send("get")
         self.update_enabled()
 
+    def on_cog_run(self):
+        if not self.connected():
+            return
+        if self.running():
+            QtWidgets.QMessageBox.information(self, APP_TITLE, "Stop the motor first.")
+            return
+        sec = self.cog_time.value()
+        q = QtWidgets.QMessageBox.question(
+            self, APP_TITLE,
+            "The motor will turn one revolution forward and back in position mode, %d s each way (about %d s in total). "
+            "Keep it unloaded and free to rotate.\n\nStart the cogging measurement?" % (sec, 2 * sec + 5))
+        if q != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.flush_timer.stop()
+        self.flush_sets()
+        self.link.send("cog run %d" % sec)
+        self.cog_label.setText("Measuring the cogging map... (about %d s)" % (2 * sec + 5))
+        self.set_status("Cogging measurement running...")
+
+    def on_cog_result(self, r):
+        if r["ok"]:
+            txt = ("Cogging map: %.0f mA peak-peak, %.0f mA rms; friction %.1f mNm. Compensation on, flash: %s."
+                   % (r["pp_ma"], r["rms_ma"], r["fric_mnm"], r["flash"]))
+            self.chk_cog.blockSignals(True)
+            self.chk_cog.setChecked(True)
+            self.chk_cog.blockSignals(False)
+            self.cog_label.setText(txt)
+            self.log_line(txt)
+            self.set_status("Cogging map measured and stored.")
+        else:
+            self.cog_label.setText("Cogging measurement failed: " + r["reason"])
+            self.log_line("Cogging measurement failed (%s)" % r["reason"])
+            self.set_status("Cogging measurement failed.")
+            QtWidgets.QMessageBox.warning(self, APP_TITLE, "Cogging measurement failed: " + r["reason"])
+        self.update_enabled()
+
+    def on_cog_state(self, line):
+        """reply line of 'cog': cogging map: stored|none, compensation on|off ..."""
+        self.chk_cog.blockSignals(True)
+        self.chk_cog.setChecked("compensation on" in line)
+        self.chk_cog.blockSignals(False)
+        self.chk_cog.setEnabled("stored" in line)
+        self.cog_label.setText("Map stored on the board." if "stored" in line else "No cogging map on the board.")
+
     def store_tune_in_preset(self, r):
         """Put the tuned gains into the board's current preset (as your own preset, bundled ones stay untouched)."""
         name = self.params.get("_name") or self.preset_combo.currentText()
@@ -1794,7 +1870,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_scope_state(ev[1], ev[2])
             elif kind == "scope":
                 self.on_scope_data(ev[1])
+            elif kind == "cog":
+                self.on_cog_result(ev[1])
             elif kind == "log":
+                if ev[1].startswith("cogging map:"):
+                    self.on_cog_state(ev[1])
                 self.log_line("board: " + ev[1])
             elif kind == "disconnected":
                 if self.connected():
@@ -1858,6 +1938,10 @@ class MainWindow(QtWidgets.QMainWindow):
         elif word in ("mode", "tq", "pos"):
             if not ok:
                 self.log_line("%s -> %s" % (cmd, ERR_TEXT.get(reason, reason)))
+        elif word == "cog":
+            if not ok:
+                self.cog_label.setText("Cogging: " + ERR_TEXT.get(reason, reason))
+                self.set_status("Cogging: " + ERR_TEXT.get(reason, reason))
         elif word == "tune":
             if not ok:
                 self.tune_label.setText("Auto-tune refused: " + ERR_TEXT.get(reason, reason))
@@ -1925,6 +2009,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_takeover.setVisible(con and own == 2)
         self.owner_label.setText(("Control: " + P.OWNER_NAMES[own]) if (con and own is not None and own < len(P.OWNER_NAMES) and run) else "")
         self.btn_tune.setEnabled(con and not run and self.state != P.ST_FAULT)
+        self.btn_cog.setEnabled(con and not run and self.state != P.ST_FAULT)
         self.btn_step.setEnabled(con and not self.step_active and self.state != P.ST_FAULT)
         self.btn_step_stop.setEnabled(self.step_active)
         for w in (self.rb_ol, self.rb_foc):

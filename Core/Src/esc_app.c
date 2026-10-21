@@ -1,6 +1,7 @@
 #include "esc_app.h"
 #include "esc_hw.h"
 #include "esc_motor.h"
+#include "esc_foc.h"
 #include "esc_params.h"
 #include "esc_flash.h"
 #include "esc_faultlog.h"
@@ -557,6 +558,40 @@ static void tune_task(void)
     else    uprintf("TUNE,fail,range\r\n");
 }
 
+/* anti-cogging measurement: when the sweeps are done the map is built here (main loop), enabled and written to flash */
+static bool cog_active;
+static int  cog_dump_i = -1;
+
+static void cog_task(void)
+{
+    if (cog_dump_i >= 0) {                                    /* 'cog dump': one line per main-loop pass */
+        if (cog_dump_i >= (int)COG_N) { uprintf("G,end,%d\r\n", cog_dump_i); cog_dump_i = -1; return; }
+        uprintf("G,%d,%d\r\n", cog_dump_i, motor_cog_value((uint32_t)cog_dump_i));
+        cog_dump_i++;
+        return;
+    }
+    if (!cog_active) return;
+    int st = motor_cog_status();
+    if (st == 0) {
+        if (g_state == ST_IDLE || g_state == ST_FAULT) {
+            cog_active = false;
+            motor_cog_load();                                 /* the previous map back */
+            uprintf("COG,fail,%s\r\n", g_state == ST_FAULT ? "fault" : "aborted");
+        }
+        return;
+    }
+    cog_active = false;
+    float pp, rms, fr;
+    const char *err = NULL;
+    if (!motor_cog_finish(&pp, &rms, &fr, &err)) {           /* also handles a failed sweep (reloads the previous map) */
+        uprintf("COG,fail,%s\r\n", err ? err : "unknown");
+        return;
+    }
+    flash_res_t fres = motor_cog_save();
+    /* peak-peak and rms of the map in mA, friction from the forward/backward difference in mNm (Kt from kv) */
+    uprintf("COG,ok,%s,%s,%s,%s\r\n", ff(pp), ff(rms), ff(fr * (8.27f / g_par.kv) * 1000.0f), flash_res_name(fres));
+}
+
 /* scope dump: one line per main-loop pass, so the protections in slow_task keep running while it is sent */
 static int scope_dump_i = -1, scope_dump_n;
 
@@ -635,6 +670,7 @@ static void handle_line(char *line)
         uprintf("focdump | faultlog [clear] | adchist [start|stop] | adcsmp [12|24|47|92] | adccal | scope [div|state|stop|dump]\r\n");
         uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("can | canset <enable|node|kbps|timeout|loss|hb|enc|iq|temp|bus|torque|power|err|ext> <value> | cansave\r\n");
+        uprintf("cog [run [s_per_turn]|on|off|save|clear|dump]  (anti-cogging map)\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
     } else if (!strcmp(cmd, "led")) {
@@ -805,6 +841,43 @@ static void handle_line(char *line)
         tune_bw = bw;
         tune_active = true;
         reply_ok();
+    } else if (!strcmp(cmd, "cog")) {
+        /* cog: state | run [s]: measure (position mode, 1 turn each way in s seconds, default 60) | on | off | save | clear | dump */
+        if (!a1) {
+            uprintf("cogging map: %s, compensation %s (speed and position mode)\r\n", motor_cog_valid() ? "stored" : "none",
+                    motor_cog_enabled() ? "on" : "off");
+            reply_ok();
+        } else if (!strcmp(a1, "run")) {
+            float sec = a2 ? strtof(a2, NULL) : 60.0f;
+            const char *why = NULL;
+            if (!(sec >= 10.0f && sec <= 600.0f))                     why = "range";
+            else if (g_state == ST_FAULT)                             why = "fault";
+            else if (g_state != ST_IDLE)                              why = "not_idle";
+            else if (!g_cal_done)                                     why = "no_cal";
+            else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)      why = "bus_voltage";
+            else if (g_par.enc_dir == 0)                              why = "no_enc_cal";
+            if (!why && !motor_cog_start(sec))                        why = "refused";
+            if (why) { reply_err(why); return; }
+            motor_set_owner(SRC_USB);
+            cog_active = true;
+            reply_ok();
+        } else if (!strcmp(a1, "on") || !strcmp(a1, "off")) {
+            if (!motor_cog_valid() && !strcmp(a1, "on")) { reply_err("no_map"); return; }
+            motor_cog_enable(!strcmp(a1, "on"));
+            reply_ok();
+        } else if (!strcmp(a1, "save")) {
+            if (motor_running()) { reply_err("motor_running"); return; }
+            flash_res_t r = motor_cog_save();
+            if (r == FLASH_RES_OK) reply_ok(); else reply_err(flash_res_name(r));
+        } else if (!strcmp(a1, "clear")) {
+            if (motor_running()) { reply_err("motor_running"); return; }
+            motor_cog_clear();                                     /* RAM; 'cog save' makes it permanent */
+            reply_ok();
+        } else if (!strcmp(a1, "dump")) {
+            if (!motor_cog_valid()) { reply_err("no_map"); return; }
+            uprintf("G,count,%d,%d\r\n", (int)COG_N, 16384 / (int)COG_N);   /* bins, sensor counts per bin */
+            cog_dump_i = 0;
+        } else reply_err("range");
     } else if (!strcmp(cmd, "faultlog")) {
         /* faultlog [clear]: last faults / watchdog stops / abnormal resets, oldest first, kept in flash */
         if (a1 && !strcmp(a1, "clear")) {
@@ -1026,6 +1099,7 @@ void esc_app_init(void)
         motor_set_offsets(img.cs_offset);
         offsets_from_flash = true;
     }
+    motor_cog_load();                               /* anti-cogging map, if one was stored */
     wdg_start();
 }
 
@@ -1039,6 +1113,7 @@ void esc_app_loop(void)
     stream_task();
     cal_task();
     tune_task();
+    cog_task();
     can_task();
     scope_task();
     flog_task(motor_running());

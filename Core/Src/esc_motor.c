@@ -46,6 +46,17 @@ static foc_tune_t    tune;
 static bool          tune_arm;
 static volatile bool tune_request;
 static volatile int  tune_rc;
+/* anti-cogging: a position-mode FOC run whose position command comes from foc_cog_step (cog_arm -> cog_request, one-shot like
+ * the tune). The map (mA per sensor-angle bin) is added as Iq feed-forward in speed and position mode while cog_on. */
+static foc_cog_t     cog;
+static float         cog_sum[COG_N];
+static uint16_t      cog_cnt[COG_N];
+static int16_t       cog_map[COG_N];
+static float         cog_s_turn = 60.0f;
+static bool          cog_arm;
+static volatile bool cog_request;
+static volatile int  cog_rc;
+static volatile bool cog_valid, cog_on;
 static volatile uint16_t enc_cached;
 static volatile bool enc_cached_ok;
 
@@ -206,6 +217,9 @@ static bool foc_tick(const foc_in_t *in)
     cmd.tq_a = tune_request ? tune.tq : g_tq_cmd;
     cmd.rpm = g_vel_ext ? g_vel_ext_rpm : g_par.rpm * (float)g_par.dir;
     cmd.pos_deg = g_pos_cmd + (pos_off_turns - (float)foc.turns_base) * 360.0f;     /* user frame -> FOC frame */
+    cmd.iq_ff = 0.0f;
+    if (cog_request) cmd.pos_deg = cog.p_cmd;
+    else if (cog_on && cog_valid && !tune_request) cmd.iq_ff = foc_cog_lookup(cog_map, foc.enc_prev);
     bool step_ok = foc_step(&foc, in, &cmd, &g_par, &g_eff);
     if (!foc_log_frozen) {
         float *r = foc_log[foc_log_head % FOC_LOG_N];
@@ -216,6 +230,18 @@ static bool foc_tick(const foc_in_t *in)
     if (!step_ok) {
         motor_fault(foc.fault == FF_ENCODER ? FLT_ENCODER : FLT_OVERSPEED);
         return false;
+    }
+    if (cog_request) {
+        int rc = foc_cog_step(&cog, &foc, in->dt);
+        if (rc != 0) {                                        /* sweeps finished or failed: outputs off, the main loop finishes */
+            cog_rc = rc;
+            cog_request = false;
+            TIM1->BDTR &= ~TIM_BDTR_MOE;
+            TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;
+            g_state = ST_IDLE;
+            g_rpm_cmd = 0.0f; g_v_ll = 0.0f;
+            return false;
+        }
     }
     if (tune_request) {
         int rc = foc_tune_step(&tune, &foc, in->dt);
@@ -479,6 +505,7 @@ void motor_fault(esc_fault_t f)
     g_tq_cmd = 0.0f;
     cal_request = false;
     tune_request = false; tune_arm = false;
+    cog_request = false; cog_arm = false;
     g_vel_ext = false;
 }
 
@@ -491,13 +518,15 @@ bool motor_start(void)
 {
     tune_request = tune_arm;           /* one-shot: only the start made by motor_tune_start is a tune run */
     tune_arm = false;
-    if (g_state != ST_IDLE || !g_cal_done) { tune_request = false; return false; }
+    cog_request = cog_arm;             /* same for motor_cog_start */
+    cog_arm = false;
+    if (g_state != ST_IDLE || !g_cal_done) { tune_request = false; cog_request = false; return false; }
     float vb = g_vbus;
     params_derive(&g_par, vb, &g_eff);
-    if (vb < VBUS_MIN_V || vb > VBUS_MAX_V) { tune_request = false; return false; }
+    if (vb < VBUS_MIN_V || vb > VBUS_MAX_V) { tune_request = false; cog_request = false; return false; }
     if (!cal_request) {
-        run_mode = tune_request ? MODE_TORQUE : g_mode;
-        if (tune_request && g_par.enc_dir == 0) { tune_request = false; return false; }
+        run_mode = tune_request ? MODE_TORQUE : (cog_request ? MODE_POSITION : g_mode);
+        if ((tune_request || cog_request) && g_par.enc_dir == 0) { tune_request = false; cog_request = false; return false; }
         if (run_mode != MODE_OPEN && g_par.enc_dir == 0) return false;     /* FOC needs the encoder calibration */
         if (run_mode == MODE_OPEN) { g_id = g_iq = 0.0f; }
     }
@@ -512,6 +541,7 @@ bool motor_start(void)
     foc_log_frozen = false; foc_log_head = 0;
     g_vd = g_vq = g_iq_ref = 0.0f; g_pos_sp = -1.0f;
     if (tune_request) foc_tune_begin(&tune, &g_par, vb);
+    if (cog_request) foc_cog_begin(&cog, cog_s_turn, cog_sum, cog_cnt, cog_map);
 
     TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;
     TIM1->CCER = CCER_ALL;
@@ -543,6 +573,46 @@ bool motor_tune_start(void)
 }
 
 int motor_tune_status(void) { return tune_rc; }
+
+bool motor_cog_start(float s_per_turn)
+{
+    if (g_state != ST_IDLE) return false;
+    cog_rc = 0;
+    cog_valid = false;                   /* the map buffer is overwritten by the measurement */
+    cog_s_turn = s_per_turn;
+    cog_arm = true;
+    bool ok = motor_start();
+    if (!ok) motor_cog_load();
+    return ok;
+}
+
+int motor_cog_status(void) { return cog_rc; }
+
+bool motor_cog_finish(float *pp_ma, float *rms_ma, float *fric_a, const char **err)
+{
+    bool ok = (cog_rc > 0) && foc_cog_finish(&cog);
+    if (err) *err = cog.err;
+    cog_rc = 0;
+    if (!ok) { motor_cog_load(); return false; }          /* the previous map (if any) back from flash */
+    *pp_ma = cog.pp_ma; *rms_ma = cog.rms_ma; *fric_a = cog.fric_a;
+    cog_valid = true; cog_on = true;
+    return true;
+}
+
+bool motor_cog_load(void)
+{
+    bool en = false;
+    cog_valid = flash_cog_load(cog_map, COG_N, &en);
+    cog_on = cog_valid && en;
+    return cog_valid;
+}
+
+flash_res_t motor_cog_save(void) { return flash_cog_save(cog_map, COG_N, cog_on); }
+bool motor_cog_valid(void) { return cog_valid; }
+bool motor_cog_enabled(void) { return cog_on && cog_valid; }
+void motor_cog_enable(bool on) { cog_on = on && cog_valid; }
+void motor_cog_clear(void) { cog_on = false; cog_valid = false; memset(cog_map, 0, sizeof(cog_map)); }
+int  motor_cog_value(uint32_t i) { return (i < COG_N) ? cog_map[i] : 0; }
 
 bool motor_tune_result(float bw_hz, float *j_kgm2, float *tf_nm, float *spd_kp, float *spd_ki, float *pos_kp, const char **err)
 {
@@ -654,6 +724,7 @@ void motor_stop(void)
     g_vel_ext = false;
     cal_request = false;
     tune_request = false; tune_arm = false;
+    cog_request = false; cog_arm = false;
     g_tq_cmd = 0.0f;
     TIM1->BDTR &= ~TIM_BDTR_MOE;
     TIM1->CCR1 = 0; TIM1->CCR2 = 0; TIM1->CCR3 = 0;

@@ -152,7 +152,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 ### 3.3 Reserve the parameter and fault-log flash pages
 
 The settings live in the last 2 KB of flash (0x0807F800), the fault log at 0x0807E000. In the linker script
-`STM32G474RETX_FLASH.ld` set `FLASH ... LENGTH` to **`500K`** (done in this repo; the CAN settings use 0x0807D000). Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
+`STM32G474RETX_FLASH.ld` set `FLASH ... LENGTH` to **`488K`** (done in this repo; the CAN settings use 0x0807D000, the anti-cogging map 0x0807A000-0x0807CFFF). Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
 `HAL_FLASH_MODULE_ENABLED` must be on in `stm32g4xx_hal_conf.h` (it is by default).
 
 ### 3.4 Compiler settings (important)
@@ -267,6 +267,17 @@ with Kt = 8.27 / Kv. For the speed-loop bandwidth `bw` (default 5 Hz, 1–20 Hz,
 `TUNE,ok,<J g·cm²>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`. The firmware only changes the three gains in
 RAM; the GUI stores them in the current preset and writes them to flash. Run it with the real load, free to rotate. Stop, a fault
 or the host watchdog end the test like a normal run. *Not tested on hardware yet.*
+
+**Anti-cogging** (Tuning tab, *Measure cogging map*, or `cog run [s_per_turn]`). Needs the calibration; run it after the auto-tune,
+unloaded. In position mode the set point creeps one mechanical turn forward and back (default 60 s each way, 10-600 s, plus
+10° lead-in/out). The position loop's current reference is averaged in 4096 sensor-angle bins (0.088° each); forward and backward
+means are averaged so friction cancels, the mean is removed and the map is lightly smoothed. The map is enabled and written to its
+own flash area (0x0807A000), then used as Iq feed-forward in **speed and position mode** (not torque mode), interpolated from the
+encoder angle every control cycle. Result `COG,ok,<peak-peak mA>,<rms mA>,<friction mNm>,<flash result>` or `COG,fail,<reason>`
+(`not_following`: position error > 20°; `coverage`: < 90 % of the bins seen). `cog` shows the state, `cog on|off` switches it
+(RAM), `cog save` stores the map with the on/off state, `cog clear` removes it (RAM, then `cog save`), `cog dump` prints
+`G,<bin>,<mA>`. The map belongs to the motor and its magnet mounting: measure again after changing either. Encoder angle errors
+(weak magnet) end up in the map as well. *Not tested on hardware yet.*
 
 The **scope** (Tuning tab, `scope [div]`) records 1000 samples of the FOC loops inside the firmware at 2 kHz / `div`
 (0.5 s at div 1, up to 25 s): speed, speed set point, Iq, Iq reference, Id, Vq and position. It starts at the next FOC run after
@@ -405,6 +416,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `takeover` | The PC takes over a motor that CAN started (keeps the present set points); GUI button *Take over (USB)* |
 | `setpos [deg]` | The present position becomes `deg` (like ODrive Set_Absolute_Position, RAM only); without argument: print it |
 | `tune [bw_hz]` | Speed/position gain auto-tune (section 9) → `TUNE,ok,...` or `TUNE,fail,<reason>` |
+| `cog [run [s]\|on\|off\|save\|clear\|dump]` | Anti-cogging map (section 9) → `COG,ok,<pp mA>,<rms mA>,<friction mNm>,<flash>` or `COG,fail,<reason>` |
 | `calibrate` | Motor calibration → `CAL,ok,<R_ll mΩ>,<L_ll µH>,<dir>,<pp>` or `CAL,fail,<reason>` |
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |
 | `scope [div]`, `scope state\|stop\|dump` | 2 kHz capture of the FOC loops (section 9) |

@@ -32,6 +32,7 @@ typedef struct {
     float tq_a;               /* torque mode: q-axis current, A (sensor frame, signed) */
     float rpm;                /* speed mode: target, rpm (sensor frame, signed) */
     float pos_deg;            /* position mode: absolute target in the FOC frame, degrees (multi-turn, no wrapping) */
+    float iq_ff;              /* speed / position modes: torque-frame current added to the loop output, A (anti-cogging) */
 } foc_cmd_t;
 
 #define FOC_SPD_WIN 8
@@ -123,5 +124,40 @@ void  foc_tune_begin(foc_tune_t *t, const esc_params_t *p, float vbus);
 int   foc_tune_step(foc_tune_t *t, const foc_t *f, float dt);
 /* gains from the identified inertia for a speed-loop bandwidth bw_hz: spdkp = J w / Kt (A/rpm), spdki = spdkp w / 4, poskp = w / 24 */
 void  foc_tune_gains(const foc_tune_t *t, float bw_hz, float *spd_kp, float *spd_ki, float *pos_kp);
+
+/* ---------- anti-cogging map measurement ----------
+ * Runs on top of a position-mode FOC run and produces its position command (FOC frame): the set point creeps one mechanical turn
+ * forward and back, the loop's torque-frame current reference (iq_ref_t) is averaged per sensor-angle bin (COG_N bins = sensor
+ * counts >> COG_SHIFT). Forward and backward means are averaged (friction cancels), the mean over the turn is removed.
+ * foc_cog_step (control interrupt) only accumulates; foc_cog_finish does the heavy part in the main loop. */
+#define COG_SHIFT 2u
+#define COG_N     (16384u >> COG_SHIFT)
+#define COG_EMPTY ((int16_t)-32768)
+
+typedef struct {
+    int      step;
+    float    t;                        /* time in the current step, s */
+    float    v_dps;                    /* sweep speed, deg/s */
+    float    p0, p_cmd;                /* start position and position command, degrees, FOC frame */
+    float   *sum;                      /* COG_N each, the caller's buffers */
+    uint16_t *cnt;
+    int16_t  *map;                     /* mA: forward means after the first sweep, the result after foc_cog_finish */
+    uint32_t conv_i;                   /* bins converted so far (in chunks during the pause) */
+    float    sum_f, sum_r;             /* sum of the bin means per direction, A (friction estimate) */
+    uint32_t nb_f, nb_r;
+    /* results */
+    float    pp_ma, rms_ma, fric_a;
+    uint32_t empty;
+    const char *err;
+} foc_cog_t;
+
+void  foc_cog_begin(foc_cog_t *c, float s_per_turn, float *sum, uint16_t *cnt, int16_t *map);
+/* call after every foc_step of the position-mode run: 0 = running, 1 = sweeps done (then foc_cog_finish), -1 = failed (c->err).
+ * c->p_cmd is the position command for the next foc_step. */
+int   foc_cog_step(foc_cog_t *c, const foc_t *f, float dt);
+/* main loop, after foc_cog_step returned 1: builds the final map in c->map. false = failed (c->err). */
+bool  foc_cog_finish(foc_cog_t *c);
+/* feed-forward current (A, torque frame) for a 14-bit sensor angle, linear interpolation between bins */
+float foc_cog_lookup(const int16_t *map, uint16_t enc);
 
 #endif

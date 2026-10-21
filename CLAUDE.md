@@ -26,6 +26,10 @@ is `README.md` (same file in `GUI/`). Keep both copies identical when you edit i
   ripple. Several conclusions from that period (current-sample spikes, the "hardware ADC trigger does not work" finding,
   the low inductance measured by the calibration) may have been caused by the motor, not the firmware.
   Re-check on the healthy DJI 2212 motor before building on them.
+- **Second board (laptop setup, 2026-10-21):** phase A read ~5x too high (bad shunt solder joint, resoldered). Calibration of the
+  M8325s failed with `no_current` at 28 V: one PWM count = ~0.18 A on 36 mOhm, finer than the 5 % settle window; worked with
+  higher `ical` / lower Vbus (firmware not changed). Result: R_ll 43.9 mOhm, L_ll 15.5 uH (so the old "5x low" L was the damaged
+  motor/ADC), J 5058 g cm^2, friction 62 mNm (suspiciously high). USB dropped during calibration once (MCU kept running).
 - **Gain auto-tune re-implemented 2026-10-20 (untested on hardware):** `tune [bw]`, `foc_tune_*` in `esc_foc.c`, isolated:
   a torque-mode FOC run whose torque command comes from `foc_tune_step` (one-shot `tune_arm` -> `tune_request` in `esc_motor.c`,
   cleared on start/stop/fault/finish). No parameter struct change; writes only spdkp/spdki/poskp in RAM.
@@ -65,7 +69,7 @@ in `main.c` and `esc_usb_rx` in `usbd_cdc_if.c`):
 | `esc_faultlog.c` | Fault log: last 8 faults / watchdog stops / abnormal resets, RAM + own flash page 0x0807E000, written by the main loop only while stopped; `faultlog [clear]` |
 | `esc_can.c` | FDCAN2 register driver (PB5 RX / PB6 TX AF9, PCLK1 kernel clock, 17 tq, filter node_id<<5 mask 0x7E0 -> RX FIFO0 -> IRQ (prio 4) -> ring -> main loop), CAN settings page 0x0807D000 (`can`, `canset`, `cansave`). `ESC_CAN_ENABLE 0` in esc_config.h builds without CAN. Baseline before CAN: git tag `pre-can` |
 | `esc_can_odrive.c` | ODrive CANSimple v0.6 layout: commands -> app_start/app_calibrate(save)/app_stop/app_fault, set points via g_vel_ext / g_tq_cmd / g_pos_cmd (only while CAN owns or stopped), CAN watchdog (coast/brake -> FLT_CAN_TIMEOUT), estop -> FLT_ESTOP, cyclic + RTR telemetry, extra 29-bit frames 0x10000000 or node<<8 or idx. DBC: `can/make_dbc.py` (keep in sync) |
-| `esc_params.c`, `esc_flash.c` | Parameter table (name, type, range), defaults, flash image in the last 2 KB (0x0807F800), CRC, version 5 |
+| `esc_params.c`, `esc_flash.c` | Parameter table (name, type, range), defaults, flash image in the last 2 KB (0x0807F800), CRC, version 5; anti-cogging map 0x0807A000 (12 KB, `flash_cog_*`) |
 
 Key mechanisms:
 - **Current sampling.** ADC1/2/3 injected, one channel each, 12.5-cycle sampling, triggered at OC4REF rising edge
@@ -99,7 +103,12 @@ Key mechanisms:
 - Host watchdog: GUI sends `ping` every 200 ms and `wd 3000`; uses a signed time difference (an unsigned one caused random
   stops). `status` shows last stop reason, last MCU reset cause (RCC CSR flags), uptime, current-trigger mode, rejected/late
   samples, longest control-interrupt time (must be well below 50 us).
-- Build: **-O2** (at -O0 the control interrupt is too slow), hard-float, linker script FLASH LENGTH 500K (CAN settings 0x0807D000, fault log 0x0807E000, parameters 0x0807F800).
+- Build: **-O2** (at -O0 the control interrupt is too slow), hard-float, linker script FLASH LENGTH 488K (cogging map 0x0807A000, CAN settings 0x0807D000, fault log 0x0807E000, parameters 0x0807F800).
+- **Anti-cogging (2026-10-21, untested on hardware):** `cog run [s]` = position-mode run whose position command comes from
+  `foc_cog_step` (`cog_arm` -> `cog_request`, one-shot like the tune), 1 turn forward + back, iq_ref_t averaged in 4096 sensor-angle
+  bins, fwd/rev averaged, mean removed; `foc_cog_finish` runs in the main loop (`cog_task`), then enabled + saved to flash.
+  Applied as `foc_cmd_t.iq_ff` (torque frame, interpolated from `foc.enc_prev`) in speed/position mode only. No parameter change;
+  the on/off state lives in the map's flash header. RAM: 32 KB of buffers.
 - **Changing `esc_params_t`** needs a `PARAMS_VERSION` bump, the static asserts in `esc_params.c`, the GUI's
   `EXPECTED_PARAMS_VERSION` in `GUI/protocol.py`, and a decision about old flash images (saved settings and
   calibration are lost otherwise). The current loader also accepts version-6 images from the reverted build.

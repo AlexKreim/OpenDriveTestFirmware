@@ -12,7 +12,7 @@ except ImportError:          # the GUI shows a clear message; tests inject their
     serial = None
 
 REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune", "scope", "faultlog",
-                  "canset", "cansave", "canget", "takeover", "setpos"}
+                  "canset", "cansave", "canget", "takeover", "setpos", "cog"}
 PENDING_TIMEOUT_S = 2.0
 
 
@@ -28,6 +28,7 @@ class EscLink:
          ("faultlog", dict)             complete "faultlog": {boot, flash, entries [dict per L line]}
          ("cancfg", dict)               reply to "canget": CAN settings and bus state
          ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
+         ("cog", dict)                  result of "cog run": {ok, pp_ma, rms_ma, fric_mnm, flash} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
     """
@@ -210,6 +211,20 @@ class EscLink:
             if len(f) == len(keys):
                 try:
                     self.events.put(("cancfg", dict(zip(keys, (int(x) for x in f)))))
+                    return
+                except ValueError:
+                    pass
+            self.events.put(("log", line))
+            return
+        if line.startswith("COG,"):
+            f = line.split(",")
+            if len(f) >= 3 and f[1] == "fail":
+                self.events.put(("cog", {"ok": False, "reason": f[2]}))
+                return
+            if len(f) >= 6 and f[1] == "ok":
+                try:
+                    v = [float(x) for x in f[2:5]]
+                    self.events.put(("cog", {"ok": True, "pp_ma": v[0], "rms_ma": v[1], "fric_mnm": v[2], "flash": f[5]}))
                     return
                 except ValueError:
                     pass

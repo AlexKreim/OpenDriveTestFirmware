@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esc_params.h"
+#include "esc_flash.h"
 
 typedef enum { ST_IDLE = 0, ST_PRECHARGE, ST_ALIGN, ST_RUN, ST_FAULT, ST_CALIB } esc_state_t;
 
@@ -52,6 +53,20 @@ bool  motor_cal_result(float *r_phase_ohm, float *l_phase_h, int *enc_dir, float
 bool  motor_tune_start(void);
 int   motor_tune_status(void);              /* 0 = running / not started, 1 = finished ok, -1 = failed */
 bool  motor_tune_result(float bw_hz, float *j_kgm2, float *tf_nm, float *spd_kp, float *spd_ki, float *pos_kp, const char **err);
+
+/* anti-cogging map (see foc_cog_t): measurement = position-mode run, one turn forward and back in s_per_turn each way.
+ * Status 0 = running / not started, 1 = sweeps done (call motor_cog_finish from the main loop), -1 = failed.
+ * The map is used as Iq feed-forward in speed and position mode while enabled. */
+bool  motor_cog_start(float s_per_turn);
+int   motor_cog_status(void);
+bool  motor_cog_finish(float *pp_ma, float *rms_ma, float *fric_a, const char **err);   /* false: failed, previous map reloaded */
+bool  motor_cog_load(void);                 /* from flash; false = none stored */
+flash_res_t motor_cog_save(void);           /* map + enable state. Motor must be stopped. */
+bool  motor_cog_valid(void);
+bool  motor_cog_enabled(void);
+void  motor_cog_enable(bool on);
+void  motor_cog_clear(void);                /* RAM only: no map, off */
+int   motor_cog_value(uint32_t i);          /* bin i in mA */
 /* scope: SCOPE_N samples of the FOC outer loop (2 kHz / div), starting at the next FOC tick after the alignment.
  * Channels: rpm, rpm set point, iq, iq reference (torque frame), id, vq (torque frame), position deg. Diagnostics only. */
 #define SCOPE_N  1000
