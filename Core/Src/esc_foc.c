@@ -32,7 +32,6 @@ static float wrap_to(float x, float lo, float per)
     return x;
 }
 static float wrap_pi(float x)  { return wrap_to(x, -PI_F, TWO_PI_F); }
-static float wrap180(float x)  { return wrap_to(x, -180.0f, 360.0f); }
 static float wrap360(float x)  { return wrap_to(x, 0.0f, 360.0f); }
 
 void foc_clarke_park(float ia, float ib, float ic, float th, float *id, float *iq)
@@ -158,6 +157,7 @@ bool foc_step(foc_t *f, const foc_in_t *in, const foc_cmd_t *cmd, const esc_para
         if (f->pos_cnt > (1 << 22) || f->pos_cnt < -(1 << 22)) {            /* keep the float position small */
             int32_t sh = (f->pos_cnt / 16384) * 16384;
             f->pos_cnt -= sh;
+            f->turns_base += sh / 16384;
             f->p_hat -= (float)sh * DEG_PER_CNT;
             f->p_sp -= (float)sh * DEG_PER_CNT;
         }
@@ -200,7 +200,7 @@ bool foc_step(foc_t *f, const foc_in_t *in, const foc_cmd_t *cmd, const esc_para
                 icmd = speed_pi(f, p, f->rpm_sp, f->rpm, imax);
             } else {
                 const float vmax = p->pos_vmax * 6.0f, acc = p->pos_acc * 6.0f;    /* deg/s, deg/s^2 */
-                float dd = wrap180(cmd->pos_deg - f->p_sp);
+                float dd = cmd->pos_deg - f->p_sp;                               /* absolute target (multi-turn, like ODrive) */
                 float vdes = copysignf(fminf(vmax, sqrtf(2.0f * acc * fabsf(dd))), dd);
                 f->v_sp += clampf(vdes - f->v_sp, -acc * DT_OUT, acc * DT_OUT);
                 f->p_sp += f->v_sp * DT_OUT;

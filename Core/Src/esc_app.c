@@ -265,6 +265,7 @@ static void spi_speed_task(void)
     uint16_t a = read_angle(&err);
     if (err) return;
     last = now;
+    motor_mt_track(a);                                       /* multi-turn position while FOC is not running */
     if (!init) { init = true; prev = a; t0 = now; acc = 0; return; }
     int32_t d = (int32_t)a - (int32_t)prev;
     if (d > 8192) d -= 16384; else if (d < -8192) d += 16384;
@@ -291,14 +292,19 @@ static void stream_task(void)
 
     bool err;
     uint16_t a = read_angle(&err);
-    long ang = err ? -1L : (long)(((uint32_t)a * 36000u) / 16384u);          /* 0.01 deg */
-    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld\r\n",
+    (void)a;
+    float pu = motor_pos_turns() * 360.0f;                                   /* user frame, multi-turn */
+    float pw = pu - 360.0f * floorf(pu * (1.0f / 360.0f));
+    long ang = err ? -1L : CENTI(pw >= 360.0f ? 0.0f : pw);                  /* 0.01 deg, 0..360 */
+    bool spv;
+    float psp = motor_pos_sp_turns(&spv) * 360.0f;
+    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld\r\n",
             (unsigned long)now, (int)g_state, (int)g_fault, MILLI(g_vbus),
             MILLI(g_i[0]), MILLI(g_i[1]), MILLI(g_i[2]),
             CENTI(g_rpm_cmd), CENTI(rpm_spi), CENTI(g_rpm_meas), ang,
             (long)(temp_drv * 10.0f), (long)(temp_mot * 10.0f), MILLI(g_v_ll),
             (int)g_mode, MILLI(g_id * 1.0f), MILLI(g_iq * 1.0f), MILLI(g_imag), MILLI(g_iq_ref),
-            (g_pos_sp < 0.0f) ? -1L : CENTI(g_pos_sp), MILLI(g_vd), MILLI(g_vq));
+            (g_pos_sp < 0.0f) ? -1L : CENTI(g_pos_sp), MILLI(g_vd), MILLI(g_vq), CENTI(pu), spv ? CENTI(psp) : -2147483647L);
 }
 
 /* ------------------------------------------------------------------ tests */
@@ -561,7 +567,7 @@ static void handle_line(char *line)
     if (!strcmp(cmd, "help")) {
         /* one line per call: uprintf's buffer holds 255 characters */
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n");
-        uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz]\r\n");
+        uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg abs> | setpos [deg] | calibrate | tune [bw_hz]\r\n");
         uprintf("focdump | faultlog [clear] | adchist [start|stop] | adcsmp [12|24|47|92] | adccal | scope [div|state|stop|dump]\r\n");
         uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
@@ -683,8 +689,17 @@ static void handle_line(char *line)
     } else if (!strcmp(cmd, "pos")) {
         if (!a1) { reply_err("usage"); return; }
         float v = strtof(a1, NULL);
-        if (v != v || v < 0.0f || v > 360.0f) { reply_err("range"); return; }
+        if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }   /* absolute degrees, +-1000 turns */
         g_pos_cmd = v;
+        reply_ok();
+    } else if (!strcmp(cmd, "setpos")) {
+        /* setpos <deg>: the present position becomes <deg> (like ODrive Set_Absolute_Position); without argument: print it */
+        if (a1) {
+            float v = strtof(a1, NULL);
+            if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }
+            motor_set_pos_turns(v / 360.0f);
+        }
+        uprintf("position %s deg (%s turns)\r\n", ff(motor_pos_turns() * 360.0f), ff(motor_pos_turns()));
         reply_ok();
     } else if (!strcmp(cmd, "calibrate")) {
         const char *why = NULL;

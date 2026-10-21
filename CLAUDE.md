@@ -79,6 +79,10 @@ Key mechanisms:
   frame; `enc_dir` (+-1, 0 = uncalibrated) maps sensor to electrical angle: theta_e = enc_dir * ((enc * pp) & 0x3FFF) + offset.
   Positive torque turns towards rising sensor angle. Encoder frame is one period old: Park uses theta + w*Ts, inverse Park
   theta + 2*w*Ts. Alignment (d current `ialign`) at every FOC start.
+- **Position is multi-turn (2026-10-21, like ODrive):** `g_pos_cmd` = absolute degrees in the user frame. `mt_abs` (encoder
+  counts, multi-turn) is followed by the ISR during FOC (`foc.turns_base*16384 + pos_cnt`) and by the main loop otherwise
+  (`motor_mt_track`, 2 ms). User frame = mt_abs/16384 - `pos_off_turns` (`setpos`). foc_step position mode no longer wraps
+  (shortest way removed); `turns_base` keeps the absolute count across the float shift. Telemetry T has 2 extra fields.
 - Outer loops use the measured time between ticks (`foc_in_t.dt` from the DWT cycle counter), so skipped periods do not
   distort the speed.
 - Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).

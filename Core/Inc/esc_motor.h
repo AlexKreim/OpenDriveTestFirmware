@@ -27,7 +27,7 @@ extern volatile float        g_v_ll;        /* line-line voltage the controller 
 extern volatile bool         g_cal_done;
 extern volatile esc_mode_t   g_mode;        /* selected control mode, change only while stopped */
 extern volatile float        g_tq_cmd;      /* torque mode: q current, A (towards rising sensor angle when positive) */
-extern volatile float        g_pos_cmd;     /* position mode: degrees 0..360 */
+extern volatile float        g_pos_cmd;     /* position mode: absolute target in degrees, multi-turn (360 = one turn), user frame */
 /* FOC telemetry (zero in open loop except imag / id / iq which are projected on the commanded angle) */
 extern volatile float g_id, g_iq, g_imag, g_iq_ref, g_pos_sp, g_vd, g_vq;
 extern volatile uint16_t     g_raw[3];      /* last raw injected ADC counts (phase A/B/C), diagnostics */
@@ -67,6 +67,12 @@ void     motor_adc_hist_stop(void);
 bool     motor_adc_hist_on(void);
 uint32_t motor_adc_hist_n(void);           /* samples counted */
 uint32_t motor_adc_hist_get(int ph, int bin);
+/* Multi-turn position (like ODrive pos_estimate): followed by the control interrupt while FOC runs and by the main loop
+ * (motor_mt_track, every 2 ms) otherwise. User frame = encoder turns - offset (Set_Absolute_Position / 'setpos'). */
+void  motor_mt_track(uint16_t enc);         /* main loop: fresh 14-bit angle while FOC is not running */
+float motor_pos_turns(void);                /* user frame, turns */
+void  motor_set_pos_turns(float turns);     /* the present position becomes 'turns' (position target moves with it) */
+float motor_pos_sp_turns(bool *valid);      /* position-mode profile set point, user frame */
 bool  motor_angle(uint16_t *a);             /* last angle read by the control interrupt (valid while FOC / calibration runs) */
 bool  motor_foc_active(void);
 int   motor_foc_log_count(void);            /* FOC samples kept for the last fault (diagnostics) */

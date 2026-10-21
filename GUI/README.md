@@ -400,7 +400,8 @@ Commands answer `OK` or `ERR,<reason>`.
 | `zero [ram]` | Measure current-sensor offsets (and store them) |
 | `mode 0\|1\|2\|3` | Open loop / torque / speed / position |
 | `start`, `stop`, `clear` | Run, coast, reset a fault |
-| `tq <A>`, `pos <deg>` | Torque and position set points |
+| `tq <A>`, `pos <deg>` | Torque set point; position target in absolute multi-turn degrees (360 = one turn, like ODrive, +-360000) |
+| `setpos [deg]` | The present position becomes `deg` (like ODrive Set_Absolute_Position, RAM only); without argument: print it |
 | `tune [bw_hz]` | Speed/position gain auto-tune (section 9) → `TUNE,ok,...` or `TUNE,fail,<reason>` |
 | `calibrate` | Motor calibration → `CAL,ok,<R_ll mΩ>,<L_ll µH>,<dir>,<pp>` or `CAL,fail,<reason>` |
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |

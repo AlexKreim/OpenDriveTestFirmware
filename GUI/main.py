@@ -39,7 +39,7 @@ PLOT_KEYS = ["rpm_cmd", "rpm_spi", "rpm_abi", "ia", "ib", "ic", "vbus", "vll", "
 STEP_KINDS = [
     ("Torque (A, FOC)",   P.MODE_TORQUE,   "A",   -0.3, 0.3,  0.3, (-100.0, 100.0), 2, "iqref",   "iq"),
     ("Speed (rpm, FOC)",  P.MODE_SPEED,    "rpm", 100.0, 300.0, 1.5, (0.0, 20000.0), 0, "rpm_cmd", "rpm_abi"),
-    ("Position (deg, FOC)", P.MODE_POSITION, "deg", 90.0, 120.0, 1.0, (0.0, 360.0), 1, "possp",   "angle"),
+    ("Position (deg, FOC)", P.MODE_POSITION, "deg", 90.0, 120.0, 1.0, (-3600.0, 3600.0), 1, "possp",   "angle"),
 ]
 
 STOP_STYLE = "QPushButton { background-color: #c62828; color: white; font-weight: bold; font-size: 15px; }" \
@@ -479,8 +479,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _tab_position(self):
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
-        note = QtWidgets.QLabel("Position control (FOC): the shaft moves to the target by the shortest way with the speed and "
-                                "acceleration limits of the Tuning tab and holds it. It starts by holding the position it has.")
+        note = QtWidgets.QLabel("Position control (FOC), like ODrive: the target is an absolute, multi-turn position "
+                                "(360 deg = one turn, 720 = two turns, ...). The shaft moves there with the speed and acceleration "
+                                "limits of the Tuning tab and holds it. It starts by holding the position it has. The dial sets "
+                                "the angle within the target's turn.")
         note.setWordWrap(True)
         lay.addWidget(note)
         self.pos_live = QtWidgets.QLabel("Shaft angle: ---")
@@ -491,10 +493,10 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(self.pos_live)
         self.pos_sp_live = QtWidgets.QLabel("Profile set point: ---")
         lay.addWidget(self.pos_sp_live)
-        g = QtWidgets.QGroupBox("Target position (0-360 deg)")
+        g = QtWidgets.QGroupBox("Target position (absolute, multi-turn)")
         form = QtWidgets.QFormLayout(g)
         self.pos_spin = QtWidgets.QDoubleSpinBox()
-        self.pos_spin.setRange(0, 360)
+        self.pos_spin.setRange(-360000, 360000)
         self.pos_spin.setDecimals(1)
         self.pos_spin.setSuffix(" deg")
         self.pos_spin.setKeyboardTracking(False)
@@ -511,6 +513,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_pos_here = QtWidgets.QPushButton("Hold current position")
         self.btn_pos_here.clicked.connect(lambda _=False: self.on_pos_here())
         lay.addWidget(self.btn_pos_here)
+        b = QtWidgets.QPushButton("Set current position as 0")
+        b.setToolTip("Like ODrive Set_Absolute_Position: the present position becomes 0 deg (RAM only, lost at reset).")
+        b.clicked.connect(lambda _=False: self.on_pos_zero())
+        lay.addWidget(b)
         lay.addLayout(self._start_stop_row())
         lay.addStretch(1)
         return w
@@ -1304,8 +1310,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.link.send("tq %.4f" % self.torque_a())
 
     def _dial_to_spin(self, v):
+        base = 360.0 * (self.pos_spin.value() // 360.0)         # keep the turn of the present target
         self.pos_spin.blockSignals(True)
-        self.pos_spin.setValue(float(v))
+        self.pos_spin.setValue(base + float(v))
         self.pos_spin.blockSignals(False)
         self.on_pos_changed()
 
@@ -1322,9 +1329,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.connected() and self.running() and self.sample and self.sample.get("mode") == P.MODE_POSITION:
             self.link.send("pos %.2f" % self.pos_spin.value())
 
+    def position_now(self):
+        """Multi-turn position (deg) from the telemetry, or the 0-360 angle from older firmware."""
+        if not self.sample:
+            return None
+        if self.sample.get("pos_mt") is not None:
+            return float(self.sample["pos_mt"])
+        return None if self.sample.get("angle") is None else float(self.sample["angle"])
+
     def on_pos_here(self):
-        if self.sample and self.sample.get("angle") is not None:
-            self.pos_spin.setValue(float(self.sample["angle"]))
+        p = self.position_now()
+        if p is not None:
+            self.pos_spin.setValue(p)
+
+    def on_pos_zero(self):
+        if self.connected():
+            self.link.send("setpos 0")
+            self.pos_spin.blockSignals(True)
+            self.pos_spin.setValue(0.0)
+            self.pos_spin.blockSignals(False)
+            self._spin_to_dial(0.0)
 
     def on_calibrate(self):
         if not self.connected():
@@ -1705,7 +1729,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_step_stop(False)
             elif getattr(self, "start_mode", 0) == P.MODE_POSITION and self.sample and self.sample.get("angle") is not None:
                 self.pos_spin.blockSignals(True)
-                self.pos_spin.setValue(float(self.sample["angle"]))      # the firmware holds the present position at start
+                self.pos_spin.setValue(self.position_now())             # the firmware holds the present position at start
                 self.pos_spin.blockSignals(False)
                 self._spin_to_dial(self.pos_spin.value())
         elif word in ("mode", "tq", "pos"):
@@ -1823,13 +1847,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ro["id"].setText("%.3f A" % s["id"])
             self.ro["iq"].setText("%.3f A" % s["iq"])
             self.tq_live.setText("Iq measured: %.3f A  (|I| %.3f A)" % (s["iq"], s["imag"]))
-            self.pos_sp_live.setText("Profile set point: ---" if s["possp"] is None else "Profile set point: %.1f deg" % s["possp"])
+            psp = s.get("possp_mt") if s.get("possp_mt") is not None else s["possp"]
+            self.pos_sp_live.setText("Profile set point: ---" if psp is None else "Profile set point: %.1f deg (%.3f turns)" % (psp, psp / 360.0))
             self.ro["rpm_cmd"].setText("%.1f rpm" % s["rpm_cmd"])
             self.ro["rpm_spi"].setText("%.1f rpm" % s["rpm_spi"])
             self.ro["angle"].setText("---" if s["angle"] is None else "%.1f deg" % s["angle"])
             self.ro["tdrv"].setText("---" if s["tdrv"] is None else "%.1f C" % s["tdrv"])
             self.ro["tmot"].setText("---" if s["tmot"] is None else "%.1f C" % s["tmot"])
-            self.pos_live.setText("Shaft angle: ---" if s["angle"] is None else "Shaft angle: %.1f deg" % s["angle"])
+            pm = s.get("pos_mt")
+            if pm is not None:
+                self.pos_live.setText("Position: %.1f deg (%.3f turns), angle %.1f deg" % (pm, pm / 360.0, s["angle"] if s["angle"] is not None else 0.0))
+            else:
+                self.pos_live.setText("Shaft angle: ---" if s["angle"] is None else "Shaft angle: %.1f deg" % s["angle"])
             if self.params:
                 self.refresh_derived()
         if self.rec_writer is not None:

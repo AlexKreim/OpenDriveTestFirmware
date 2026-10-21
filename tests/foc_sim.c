@@ -263,7 +263,7 @@ static void cb_pos(double t, foc_cmd_t *c, void *u) { pcb_t *x = u; c->pos_deg =
 
 static void test_position(int sdir)
 {
-    printf("position loop (sensor_dir %+d): move to 90 deg, then to 350 deg (shortest way through 0)\n", sdir);
+    printf("position loop (sensor_dir %+d): move to 90 deg, then to absolute 350 deg (multi-turn target, no shortest-way wrap)\n", sdir);
     plant_t m = make_plant(); m.sensor_dir = sdir; m.tload = 0.0;
     esc_params_t p = make_params(); p.enc_dir = (int8_t)sdir; p.pos_kp = 3; p.pos_vmax = 100; p.pos_acc = 500;
     foc_t f;

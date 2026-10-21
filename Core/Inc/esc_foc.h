@@ -31,7 +31,7 @@ typedef struct {
 typedef struct {
     float tq_a;               /* torque mode: q-axis current, A (sensor frame, signed) */
     float rpm;                /* speed mode: target, rpm (sensor frame, signed) */
-    float pos_deg;            /* position mode: target, degrees 0..360 */
+    float pos_deg;            /* position mode: absolute target in the FOC frame, degrees (multi-turn, no wrapping) */
 } foc_cmd_t;
 
 #define FOC_SPD_WIN 8
@@ -56,6 +56,7 @@ typedef struct {
     uint16_t enc_prev, enc_cand;
     uint8_t enc_cand_n;
     int32_t pos_cnt;
+    int32_t turns_base;       /* whole turns removed from pos_cnt to keep the floats small: absolute = turns_base * 16384 + pos_cnt */
     int32_t ring[FOC_SPD_WIN + 1];
     uint8_t ring_idx, outer_cnt, enc_fail, ovs;
     uint32_t tick, align_ticks;

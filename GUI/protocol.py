@@ -24,6 +24,10 @@ TELEM_FIELDS = ["ms", "state", "fault", "vbus_mv", "ia_ma", "ib_ma", "ic_ma",
                 "rpm_cmd_c", "rpm_spi_c", "rpm_abi_c", "angle_c", "tdrv_d", "tmot_d", "vll_mv",
                 "mode", "id_ma", "iq_ma", "imag_ma", "iqref_ma", "possp_c", "vd_mv", "vq_mv"]
 
+# optional fields appended by newer firmware (older firmware sends only the 22 above):
+#   <multi-turn position x100 deg, user frame>,<position-mode profile set point x100 deg, -2147483647 = none>
+TELEM_EXTRA = ["pos_mt_c", "possp_mt_c"]
+
 CSV_COLUMNS = ["t_s", "state", "fault", "vbus_V", "ia_A", "ib_A", "ic_A", "rpm_cmd", "rpm_spi",
                "rpm_abi", "angle_deg", "t_driver_C", "t_motor_C", "v_ll_applied_V",
                "mode", "id_A", "iq_A", "i_mag_A", "iq_ref_A", "pos_setpoint_deg", "vd_V", "vq_V"]
@@ -32,10 +36,11 @@ CSV_COLUMNS = ["t_s", "state", "fault", "vbus_V", "ia_A", "ib_A", "ic_A", "rpm_c
 def parse_telemetry(line):
     """Return a dict with SI units, or None if the line is not a valid telemetry line."""
     parts = line.strip().split(",")
-    if len(parts) != 1 + len(TELEM_FIELDS) or parts[0] != "T":
+    n = len(parts) - 1
+    if parts[0] != "T" or n < len(TELEM_FIELDS) or n > len(TELEM_FIELDS) + len(TELEM_EXTRA):
         return None
     try:
-        v = dict(zip(TELEM_FIELDS, (int(x) for x in parts[1:])))
+        v = dict(zip(TELEM_FIELDS + TELEM_EXTRA, (int(x) for x in parts[1:])))
     except ValueError:
         return None
     return {
@@ -61,6 +66,8 @@ def parse_telemetry(line):
         "possp": None if v["possp_c"] < 0 else v["possp_c"] / 100.0,
         "vd": v["vd_mv"] / 1000.0,
         "vq": v["vq_mv"] / 1000.0,
+        "pos_mt": (v["pos_mt_c"] / 100.0) if "pos_mt_c" in v else None,
+        "possp_mt": (v["possp_mt_c"] / 100.0) if ("possp_mt_c" in v and v["possp_mt_c"] != -2147483647) else None
     }
 
 

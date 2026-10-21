@@ -62,6 +62,13 @@ static volatile bool     adc_hist_on;
 static volatile uint32_t adc_hist[3][32];
 static volatile uint32_t adc_hist_n;
 
+static volatile int32_t mt_abs;                 /* encoder position, multi-turn, 16384 counts per turn */
+static volatile bool    mt_valid;
+static uint16_t         mt_prev;
+static volatile bool    mt_resync = true;        /* main loop: take mt_prev from mt_abs (after FOC ran) */
+static volatile float   pos_off_turns;           /* user frame offset */
+static volatile float   pos_sp_user;             /* profile set point in the user frame, degrees */
+
 static float    theta, rpm_cur;
 static uint32_t tick;
 static uint32_t sp_tick;
@@ -195,7 +202,7 @@ static bool foc_tick(const foc_in_t *in)
     foc_cmd_t cmd;
     cmd.tq_a = tune_request ? tune.tq : g_tq_cmd;
     cmd.rpm = g_par.rpm * (float)g_par.dir;
-    cmd.pos_deg = g_pos_cmd;
+    cmd.pos_deg = g_pos_cmd + (pos_off_turns - (float)foc.turns_base) * 360.0f;     /* user frame -> FOC frame */
     bool step_ok = foc_step(&foc, in, &cmd, &g_par, &g_eff);
     if (!foc_log_frozen) {
         float *r = foc_log[foc_log_head % FOC_LOG_N];
@@ -222,7 +229,16 @@ static bool foc_tick(const foc_in_t *in)
     write_duty(foc.duty);
     if (foc.phase == FP_RUN && g_state == ST_ALIGN) g_state = ST_RUN;
     g_id = foc.id; g_iq = foc.iq * (float)g_par.enc_dir;      /* torque frame: positive = towards rising sensor angle */ g_vd = foc.vd; g_vq = foc.vq;
-    g_iq_ref = foc.iq_ref_t; g_pos_sp = (run_mode == MODE_POSITION) ? foc.pos_sp_deg : -1.0f;
+    mt_abs = foc.turns_base * 16384 + foc.pos_cnt;
+    if (run_mode == MODE_POSITION) {
+        float sp = foc.p_sp + ((float)foc.turns_base - pos_off_turns) * 360.0f;
+        pos_sp_user = sp;
+        sp -= 360.0f * floorf(sp * (1.0f / 360.0f));
+        g_pos_sp = (sp >= 360.0f) ? 0.0f : sp;
+    } else {
+        g_pos_sp = -1.0f;
+    }
+    g_iq_ref = foc.iq_ref_t;
     g_rpm_cmd = foc.rpm_sp; g_rpm_meas = foc.rpm; g_v_ll = 1.7320508f * sqrtf(foc.vd * foc.vd + foc.vq * foc.vq);
     if ((scope_st == 1u || scope_st == 2u) && foc.phase == FP_RUN && foc.outer_cnt == 0u) {   /* 2 kHz, right after the outer loop */
         scope_st = 2u;
@@ -248,8 +264,14 @@ static void motor_tick(void)
                 if (!enc_cached_ok) { motor_fault(FLT_ENCODER); break; }
                 if (cal_request) { foc_cal_begin(&cal, &in); g_state = ST_CALIB; }
                 else {
-                    g_pos_cmd = (float)(in.enc & 0x3FFFu) * (360.0f / 16384.0f);       /* hold where the shaft is until told otherwise */
+                    /* continue the multi-turn count: nearest whole turn that matches the fresh encoder angle */
+                    int32_t e = (int32_t)(in.enc & 0x3FFFu);
+                    int32_t d = mt_abs - e;
+                    int32_t turns = mt_valid ? ((d >= 0) ? (d + 8192) / 16384 : -((-d + 8192) / 16384)) : 0;
                     foc_begin(&foc, (foc_mode_t)run_mode, &g_par, &in);
+                    foc.turns_base = turns;
+                    mt_abs = turns * 16384 + e; mt_valid = true; mt_resync = true;
+                    g_pos_cmd = ((float)mt_abs * (1.0f / 16384.0f) - pos_off_turns) * 360.0f;   /* hold where the shaft is */
                     g_state = ST_ALIGN;
                 }
                 break;
@@ -561,6 +583,34 @@ bool motor_scope_get(int i, float out[SCOPE_CH])
     if (i < 0 || i >= (int)scope_n || scope_st == 2u) return false;
     for (int k = 0; k < SCOPE_CH; k++) out[k] = scope_buf[i][k];
     return true;
+}
+
+void motor_mt_track(uint16_t enc)
+{
+    enc &= 0x3FFFu;
+    if (motor_foc_active()) return;
+    if (!mt_valid) { mt_abs = enc; mt_prev = enc; mt_valid = true; mt_resync = false; return; }
+    if (mt_resync) { mt_prev = (uint16_t)(mt_abs & 0x3FFF); mt_resync = false; }
+    int32_t d = (int32_t)enc - (int32_t)mt_prev;
+    if (d > 8192) d -= 16384; else if (d < -8192) d += 16384;
+    mt_abs += d;
+    mt_prev = enc;
+}
+
+float motor_pos_turns(void) { return (float)mt_abs * (1.0f / 16384.0f) - pos_off_turns; }
+
+void motor_set_pos_turns(float turns)
+{
+    float now = motor_pos_turns();
+    float delta = turns - now;
+    pos_off_turns -= delta;
+    g_pos_cmd += delta * 360.0f;             /* a running position loop keeps holding the same physical position */
+}
+
+float motor_pos_sp_turns(bool *valid)
+{
+    if (valid) *valid = (g_pos_sp >= 0.0f);
+    return pos_sp_user * (1.0f / 360.0f);
 }
 
 bool motor_angle(uint16_t *a) { *a = enc_cached; return enc_cached_ok; }
