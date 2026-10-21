@@ -8,7 +8,15 @@
  * Reserve that area in the linker script: FLASH LENGTH = 504K (also keeps the fault-log page 0x0807E000 free). */
 #define PARAM_FLASH_ADDR  0x0807F800UL
 
-typedef enum { FLASH_RES_OK = 0, FLASH_RES_ERASE, FLASH_RES_PROGRAM, FLASH_RES_VERIFY } flash_res_t;
+typedef enum { FLASH_RES_OK = 0, FLASH_RES_ERASE, FLASH_RES_PROGRAM, FLASH_RES_VERIFY, FLASH_RES_LIMIT } flash_res_t;
+
+/* Flash wear guard. A page survives about 10 000 erase cycles; a command sent in a loop (USB or CAN) must not wear it out.
+ * Every page erase asks first: a minimum time since the last write of that page and a maximum number of writes per boot.
+ * Refused writes return FLASH_RES_LIMIT (the data stays in RAM). */
+typedef enum { FLASH_PG_PARAMS = 0, FLASH_PG_FAULTLOG, FLASH_PG_CANCFG, FLASH_PG_N } flash_page_t;
+bool     flash_guard(flash_page_t pg);          /* true: the write may go ahead (counted) */
+uint32_t flash_writes(flash_page_t pg);         /* writes of this page since boot */
+const char *flash_res_name(flash_res_t r);
 
 typedef struct {
     bool         valid;            /* an intact image is stored */

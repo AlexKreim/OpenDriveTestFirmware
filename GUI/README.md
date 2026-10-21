@@ -317,6 +317,10 @@ The header `L,count,<n>,boot,<b>,flash,<none|ok|fail|pending>` gives the number 
 
 **USB send stuck**: if the board cannot send for 500 ms while the motor runs (PC program frozen and not reading the port), the motor is stopped (*last stop* and fault log: *USB send stuck*). After 3 s stuck while stopped the board disconnects and reconnects USB, so the COM port comes back without a power cycle.
 
+**Flash wear guard**: a flash page survives about 10 000 erase cycles. Each page may be written at most every 0.5 s (fault log:
+every 10 s) and at most 100 times per boot (fault log and CAN settings: 50). Beyond that `save`/`zero` answer `ERR,flash_limit`
+and the data stays in RAM until the next reboot; the fault log keeps pending entries in RAM and retries. `status` shows the counts.
+
 **GUI crash log**: exceptions, crashes and freezes of the window longer than 5 s are written with stack traces to `%APPDATA%\ESC_Control\crash.log` (path shown in the log at start). Send it along when the GUI froze.
 
 **Host watchdog**: the GUI pings the board every 200 ms and sets `wd 3000`. If nothing arrives for 3 s the motor is stopped and

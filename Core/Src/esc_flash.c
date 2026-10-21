@@ -2,6 +2,35 @@
 #include "stm32g4xx_hal.h"
 #include <string.h>
 
+/* minimum interval (ms) and maximum writes per boot for each page */
+static const uint32_t guard_min_ms[FLASH_PG_N]  = { 500u, 10000u, 500u };
+static const uint32_t guard_max_n[FLASH_PG_N]   = { 100u, 50u, 50u };
+static uint32_t guard_last[FLASH_PG_N];
+static uint32_t guard_n[FLASH_PG_N];
+
+bool flash_guard(flash_page_t pg)
+{
+    uint32_t now = HAL_GetTick();
+    if (guard_n[pg] >= guard_max_n[pg]) return false;
+    if (guard_n[pg] > 0u && (now - guard_last[pg]) < guard_min_ms[pg]) return false;
+    guard_n[pg]++;
+    guard_last[pg] = now;
+    return true;
+}
+
+uint32_t flash_writes(flash_page_t pg) { return guard_n[pg]; }
+
+const char *flash_res_name(flash_res_t r)
+{
+    switch (r) {
+    case FLASH_RES_OK:      return "ok";
+    case FLASH_RES_ERASE:   return "flash_erase";
+    case FLASH_RES_PROGRAM: return "flash_program";
+    case FLASH_RES_VERIFY:  return "flash_verify";
+    default:                return "flash_limit";
+    }
+}
+
 bool flash_image_load(flash_image_t *img)
 {
     esc_saved_t s;
@@ -22,6 +51,7 @@ static flash_res_t write_image(const flash_image_t *img)
     esc_saved_t s;
     uint32_t flags = (img->par_valid ? SAVED_FLAG_PAR : 0u) | (img->cal_valid ? SAVED_FLAG_CAL : 0u);
     params_pack(&s, flags, &img->par, img->cs_offset);
+    if (!flash_guard(FLASH_PG_PARAMS)) return FLASH_RES_LIMIT;
 
     HAL_FLASH_Unlock();
     __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);

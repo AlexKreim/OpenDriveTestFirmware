@@ -82,6 +82,8 @@ Key mechanisms:
 - Outer loops use the measured time between ticks (`foc_in_t.dt` from the DWT cycle counter), so skipped periods do not
   distort the speed.
 - Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).
+- Flash wear guard (`flash_guard` in `esc_flash.c`): every page erase is rate limited (params / CAN config 0.5 s, 100 / 50
+  per boot; fault log 10 s, 50 per boot) -> `FLASH_RES_LIMIT` / `ERR,flash_limit`. New flash writers must call it.
 - Main-loop IWDG (2 s, `wdg_start`/`wdg_kick` in `esc_app.c`), started at the end of `esc_app_init`, kicked each loop pass and in
   the focdump/faultlog loops. Any new blocking code longer than ~1 s must kick it.
 - USB send stuck (`usb_tx_watch` in `esc_app.c`): CDC TxState busy 500 ms while running -> stop; 3 s while stopped -> USBD_Stop/Start.

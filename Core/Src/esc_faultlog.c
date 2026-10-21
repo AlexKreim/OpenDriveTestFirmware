@@ -1,6 +1,7 @@
 #include "esc_faultlog.h"
 #include "esc_motor.h"
 #include "esc_params.h"
+#include "esc_flash.h"
 #include "stm32g4xx_hal.h"
 #include <stddef.h>
 #include <string.h>
@@ -134,6 +135,7 @@ void flog_task(bool motor_running)
 {
     /* only while stopped (like 'save'), and a moment after the event so the state has settled */
     if (!dirty || motor_running || (HAL_GetTick() - dirty_ms) < 200u) return;
+    if (!flash_guard(FLASH_PG_FAULTLOG)) return;     /* stays pending in RAM, retried later (at most every 10 s) */
     wr_res = write_page() ? 1 : -1;
 }
 
@@ -150,7 +152,7 @@ bool flog_clear(void)
     log_ram.n = 0;
     memset(log_ram.e, 0, sizeof(log_ram.e));
     if (pm == 0u) __enable_irq();
-    bool ok = write_page();
+    bool ok = flash_guard(FLASH_PG_FAULTLOG) && write_page();
     wr_res = ok ? 1 : -1;
     return ok;
 }

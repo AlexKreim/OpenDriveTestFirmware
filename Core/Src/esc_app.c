@@ -454,6 +454,8 @@ static void print_status(void)
     static const char *mn[] = {"open loop", "torque (FOC)", "speed (FOC)", "position (FOC)"};
     uprintf("state %s, fault %s, Vbus %s V, Ibus %s A\r\n", sn[g_state], fn[g_fault], ff(g_vbus), ff(hw_ibus_a()));
     uprintf("last stop: %s, last MCU reset: %s, uptime %lu s\r\n", stop_reason, reset_cause, (unsigned long)(HAL_GetTick() / 1000u));
+    uprintf("flash writes since boot: parameters %lu/100, fault log %lu/50, CAN config %lu/50\r\n",
+            (unsigned long)flash_writes(FLASH_PG_PARAMS), (unsigned long)flash_writes(FLASH_PG_FAULTLOG), (unsigned long)flash_writes(FLASH_PG_CANCFG));
     if (g_oc_last_ph >= 0) uprintf("last sample above the overcurrent level: phase %c, %s A (raw %u)\r\n", 'A' + g_oc_last_ph, ff(g_oc_last_a), (unsigned)g_oc_last_raw);
     uprintf("current trigger: %s, rejected current samples %lu, late (skipped) samples %lu\r\n", hw_adc_trigger_name(), (unsigned long)g_cs_rejected, (unsigned long)g_cs_late);
     uprintf("control interrupt: longest run %lu cycles = %s us (limit 50 us)\r\n", (unsigned long)g_isr_cycles_max, ff((float)g_isr_cycles_max / ((float)SystemCoreClock * 1e-6f)));
@@ -596,7 +598,7 @@ static void handle_line(char *line)
         if (motor_running()) { reply_err("motor_running"); return; }
         flash_res_t r = flash_save_params(&g_par);
         if (r == FLASH_RES_OK) { params_from_flash = true; reply_ok(); }
-        else reply_err(r == FLASH_RES_ERASE ? "flash_erase" : (r == FLASH_RES_PROGRAM ? "flash_program" : "flash_verify"));
+        else reply_err(flash_res_name(r));
     } else if (!strcmp(cmd, "load")) {
         if (motor_running()) { reply_err("motor_running"); return; }
         flash_image_t img;
@@ -651,7 +653,7 @@ static void handle_line(char *line)
         offsets_from_flash = false;
         if (save) {
             flash_res_t r = flash_save_offsets(o);
-            if (r != FLASH_RES_OK) { reply_err(r == FLASH_RES_ERASE ? "flash_erase" : (r == FLASH_RES_PROGRAM ? "flash_program" : "flash_verify")); return; }
+            if (r != FLASH_RES_OK) { reply_err(flash_res_name(r)); return; }
             offsets_from_flash = true;
         }
         reply_ok();
