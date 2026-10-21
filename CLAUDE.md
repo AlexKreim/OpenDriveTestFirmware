@@ -64,6 +64,7 @@ in `main.c` and `esc_usb_rx` in `usbd_cdc_if.c`):
 | `esc_app.c` | USB text console, commands, telemetry, temperatures/overtemp, host watchdog, `status`/`diag`/`test`, boot sequence (ADC trigger selection, offsets, flash load) |
 | `esc_faultlog.c` | Fault log: last 8 faults / watchdog stops / abnormal resets, RAM + own flash page 0x0807E000, written by the main loop only while stopped; `faultlog [clear]` |
 | `esc_can.c` | FDCAN2 register driver (PB5 RX / PB6 TX AF9, PCLK1 kernel clock, 17 tq, filter node_id<<5 mask 0x7E0 -> RX FIFO0 -> IRQ (prio 4) -> ring -> main loop), CAN settings page 0x0807D000 (`can`, `canset`, `cansave`). `ESC_CAN_ENABLE 0` in esc_config.h builds without CAN. Baseline before CAN: git tag `pre-can` |
+| `esc_can_odrive.c` | ODrive CANSimple v0.6 layout: commands -> app_start/app_calibrate(save)/app_stop/app_fault, set points via g_vel_ext / g_tq_cmd / g_pos_cmd (only while CAN owns or stopped), CAN watchdog (coast/brake -> FLT_CAN_TIMEOUT), estop -> FLT_ESTOP, cyclic + RTR telemetry, extra 29-bit frames 0x10000000 or node<<8 or idx. DBC: `can/make_dbc.py` (keep in sync) |
 | `esc_params.c`, `esc_flash.c` | Parameter table (name, type, range), defaults, flash image in the last 2 KB (0x0807F800), CRC, version 5 |
 
 Key mechanisms:
@@ -183,7 +184,9 @@ motor, so re-check on the 2212 before trusting or fixing the method.
    Fixed with constant-time wraps (untested on hardware). Check `status` interrupt time after > 1 min of running.
 2. Low-speed sticking at one mechanical angle (section 8); the calibration's R and L on the 2212.
 3. Weak AS5047P magnet field (MAGL).
-4. Owner wants cogging/offset compensation (Iq feed-forward vs angle) soon, not yet. On hold: bus-current/regen limit,
+4. CAN (2026-10-21, untested on hardware): first test `can` (error passive without a second node is normal), then a
+   master (SavvyCAN) with the DBC. Not done: control mode change while running, input modes/feed-forward, SDO.
+5. Owner wants cogging/offset compensation (Iq feed-forward vs angle) soon, not yet. On hold: bus-current/regen limit,
    bring-up wizard, offset sanity check at start, field weakening.
 5. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.
 6. Dev PC has no host gcc (FOC sim and GUI tests not run); `pacman -S mingw-w64-ucrt-x86_64-gcc` in MSYS2. GUI venv: `GUI/.venv`.

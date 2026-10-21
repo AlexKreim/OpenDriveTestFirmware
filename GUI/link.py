@@ -11,7 +11,8 @@ try:
 except ImportError:          # the GUI shows a clear message; tests inject their own serial factory
     serial = None
 
-REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune", "scope", "faultlog"}
+REPLY_COMMANDS = {"set", "start", "stop", "clear", "save", "load", "factory", "stream", "wd", "get", "params", "setname", "zero", "mode", "tq", "pos", "calibrate", "tune", "scope", "faultlog",
+                  "canset", "cansave", "canget", "takeover", "setpos"}
 PENDING_TIMEOUT_S = 2.0
 
 
@@ -25,6 +26,7 @@ class EscLink:
          ("scope_state", state, n)      reply to "scope state" (idle / armed / capturing / done, samples so far)
          ("scope", dict)                complete "scope dump": {dt (s per sample), rows [[rpm, rpm_sp, iq, iq_ref, id, vq, pos], ...]}
          ("faultlog", dict)             complete "faultlog": {boot, flash, entries [dict per L line]}
+         ("cancfg", dict)               reply to "canget": CAN settings and bus state
          ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
@@ -199,6 +201,18 @@ class EscLink:
                 return
             except (ValueError, IndexError):
                 pass
+            self.events.put(("log", line))
+            return
+        if line.startswith("C,"):
+            keys = ("enable", "node", "kbps", "timeout", "loss", "hb", "enc", "iq", "temp", "bus", "torque", "power", "err", "ext",
+                    "running", "err_passive", "bus_off", "rx", "tx")
+            f = line.split(",")[1:]
+            if len(f) == len(keys):
+                try:
+                    self.events.put(("cancfg", dict(zip(keys, (int(x) for x in f)))))
+                    return
+                except ValueError:
+                    pass
             self.events.put(("log", line))
             return
         if line.startswith("TUNE,"):

@@ -748,6 +748,65 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.btn_raw)
         gl.addLayout(row)
         lay.addWidget(g)
+        g = QtWidgets.QGroupBox("CAN bus (ODrive CANSimple)")
+        gl = QtWidgets.QVBoxLayout(g)
+        t = QtWidgets.QLabel("FDCAN2 on PB5/PB6, ODrive-compatible commands and telemetry (11-bit IDs node << 5 | cmd) plus extra "
+                             "29-bit frames. 'Apply' changes the board (RAM), 'Save CAN settings' keeps them over a reboot. Node ID, "
+                             "bit rate and on/off only change while the motor is stopped. DBC file: can/esc_odrive_node0.dbc "
+                             "(other node IDs: python can/make_dbc.py <node>).")
+        t.setWordWrap(True)
+        gl.addWidget(t)
+        form = QtWidgets.QFormLayout()
+        self.can_w = {}
+        cb = QtWidgets.QCheckBox("CAN on")
+        self.can_w["enable"] = cb
+        form.addRow("Bus:", cb)
+
+        def spin(lo, hi, suffix="", tip=""):
+            s = QtWidgets.QSpinBox()
+            s.setRange(lo, hi)
+            s.setSuffix(suffix)
+            s.setToolTip(tip)
+            return s
+        self.can_w["node"] = spin(0, 63, "", "ODrive node_id (default 0). IDs = node << 5 | command.")
+        form.addRow("Node ID:", self.can_w["node"])
+        kb = QtWidgets.QComboBox()
+        for k in (125, 250, 500, 1000):
+            kb.addItem("%d kbit/s" % k, k)
+        self.can_w["kbps"] = kb
+        form.addRow("Bit rate:", kb)
+        self.can_w["timeout"] = spin(0, 60000, " ms", "No CAN frame for this node for this time while CAN controls the motor "
+                                                       "-> loss action and fault 'CAN timeout'. 0 = off.")
+        form.addRow("Timeout:", self.can_w["timeout"])
+        lo = QtWidgets.QComboBox()
+        lo.addItem("Coast (outputs off)", 0)
+        lo.addItem("Brake to standstill, then coast", 1)
+        lo.setToolTip("Brake: speed and open loop ramp to 0 with 'accel', torque mode brakes with half 'imax' (max 3 s). "
+                      "Position mode always coasts. Braking feeds energy back into the supply: watch the bus voltage.")
+        self.can_w["loss"] = lo
+        form.addRow("On CAN loss:", lo)
+        rates = QtWidgets.QGridLayout()
+        for i, (k, title) in enumerate((("hb", "Heartbeat"), ("enc", "Encoder"), ("iq", "Iq"), ("temp", "Temperature"),
+                                        ("bus", "Bus V/I"), ("torque", "Torques"), ("power", "Powers"), ("err", "Error"),
+                                        ("ext", "Extra frames"))):
+            s = spin(0, 60000, " ms", "Send period, 0 = off (still answered on request / RTR).")
+            self.can_w[k] = s
+            rates.addWidget(QtWidgets.QLabel(title), i // 3, 2 * (i % 3))
+            rates.addWidget(s, i // 3, 2 * (i % 3) + 1)
+        form.addRow("Telemetry:", rates)
+        gl.addLayout(form)
+        row = QtWidgets.QHBoxLayout()
+        for title, fn in (("Read", lambda: self.link.send("canget")), ("Apply", self.on_can_apply),
+                          ("Save CAN settings", self.on_can_save)):
+            b = QtWidgets.QPushButton(title)
+            b.clicked.connect(lambda _=False, f=fn: f() if self.connected() else None)
+            row.addWidget(b)
+        gl.addLayout(row)
+        self.can_status = QtWidgets.QLabel("CAN: ---")
+        self.can_status.setWordWrap(True)
+        gl.addWidget(self.can_status)
+        lay.addWidget(g)
+
         g = QtWidgets.QGroupBox("Fault log (kept in flash)")
         gl = QtWidgets.QVBoxLayout(g)
         row = QtWidgets.QHBoxLayout()
@@ -938,7 +997,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.state, self.fault, self.cur_rate = P.ST_IDLE, 0, None
         self.dirty = False
         self.btn_connect.setText("Disconnect")
-        for c in ("stream 0", "ver", "wd 3000", "get"):
+        for c in ("stream 0", "ver", "wd 3000", "get", "canget"):
             self.link.send(c)
         self.apply_rate()
         self.heartbeat.start()
@@ -1475,6 +1534,47 @@ class MainWindow(QtWidgets.QMainWindow):
             self.link.send("get")                       # the CAN speed became the 'rpm' parameter
             self.log_line("Took over control from CAN.")
 
+    # ------------------------------------------------------------------ CAN settings
+    CAN_KEYS = ("enable", "node", "kbps", "timeout", "loss", "hb", "enc", "iq", "temp", "bus", "torque", "power", "err", "ext")
+
+    def _can_value(self, k):
+        w = self.can_w[k]
+        if isinstance(w, QtWidgets.QCheckBox):
+            return 1 if w.isChecked() else 0
+        if isinstance(w, QtWidgets.QComboBox):
+            return int(w.currentData())
+        return int(w.value())
+
+    def on_can_cfg(self, c):
+        self.can_cfg = dict(c)
+        for k in self.CAN_KEYS:
+            w = self.can_w[k]
+            w.blockSignals(True)
+            if isinstance(w, QtWidgets.QCheckBox):
+                w.setChecked(bool(c[k]))
+            elif isinstance(w, QtWidgets.QComboBox):
+                i = w.findData(c[k])
+                if i >= 0:
+                    w.setCurrentIndex(i)
+            else:
+                w.setValue(int(c[k]))
+            w.blockSignals(False)
+        state = "BUS-OFF" if c["bus_off"] else ("error passive (no other node / no ACK?)" if c["err_passive"] else
+                                                 ("running" if c["running"] else "off"))
+        self.can_status.setText("CAN: %s, frames received %d, sent %d" % (state, c["rx"], c["tx"]))
+
+    def on_can_apply(self):
+        old = getattr(self, "can_cfg", {})
+        for k in self.CAN_KEYS:
+            v = self._can_value(k)
+            if old.get(k) != v:
+                self.link.send("canset %s %d" % (k, v))
+        self.link.send("canget")
+
+    def on_can_save(self):
+        self.on_can_apply()
+        self.link.send("cansave")
+
     # ------------------------------------------------------------------ fault log
     def on_faultlog(self, d):
         flash = {"ok": "written to flash", "none": "nothing written since power-on", "pending": "waiting to be written (motor running)",
@@ -1681,6 +1781,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_calibration(ev[1])
             elif kind == "tune":
                 self.on_tune_result(ev[1])
+            elif kind == "cancfg":
+                self.on_can_cfg(ev[1])
             elif kind == "faultlog":
                 self.on_faultlog(ev[1])
             elif kind == "scope_state":

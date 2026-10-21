@@ -33,6 +33,7 @@ The project comes in two folders, and this README is the same in both:
 13. [Command / protocol reference](#13-command--protocol-reference)
 14. [Tests for developers](#14-tests-for-developers)
 15. [Known limitations](#15-known-limitations)
+16. [CAN bus (ODrive CANSimple)](#16-can-bus-odrive-cansimple)
 
 ---
 
@@ -410,6 +411,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `adchist start`, run, `adchist` | Histogram of the lowest 5 bits of the phase-current ADC codes while driven: `H,n,...`, per phase bin 31 / bin 0 / largest bin in %, then 32 counts. Even codes give ~3.1 % per bin |
 | `adcsmp [12\|24\|47\|92]` | Test only: phase-current ADC sampling time in cycles (hardware trigger, motor stopped). Not stored, every boot starts with 12.5 |
 | `adccal` | Test only: runs the ADC calibration again (motor stopped, not stored); run `zero ram` afterwards. `diag` shows the calibration factors |
+| `can`, `canget`, `canset <name> <value>`, `cansave` | CAN settings and state (section 16) |
 | `faultlog [clear]` | Fault log (section 10): `L,count,<n>,boot,<b>` then `L,<i>,...` lines |
 | `stream <hz>` | Telemetry `T,...` lines (22 fields, see `protocol.py`) |
 | `wd <ms>`, `ping` | Host watchdog |
@@ -444,3 +446,57 @@ Firmware source overview:
 * The inductance measurement of the calibration can read low (see section 7).
 * No hardware overcurrent protection; the software trip needs 200 µs.
 * Low bus capacitance and warm low-side FETs on the prototype limit the usable current.
+
+## 16. CAN bus (ODrive CANSimple)
+
+**Hardware:** FDCAN2, PB5 = RX, PB6 = TX, TCAN332 transceiver, 120 Ohm termination by solder jumper (close it on the two
+nodes at the ends of the bus). Default **250 kbit/s, node ID 0**, like ODrive. Settings: GUI *Motor & Advanced -> CAN bus*,
+or `can` (show), `canset <name> <value>`, `cansave`. Names: `enable node kbps timeout loss hb enc iq temp bus torque power err ext`
+(rates in ms, 0 = off). They live in their own flash page (0x0807D000), so the parameters and their format are unchanged.
+Build without CAN: `ESC_CAN_ENABLE 0` in `esc_config.h`. Last build before CAN: git tag `pre-can`.
+
+**Protocol:** ODrive CANSimple, v0.6 message layout, 11-bit ID = `node_id << 5 | cmd`, little endian, ODrive units
+(turns, turns/s, Nm, A, V). Positive = rising encoder angle. Torque in Nm uses Kt = `kt` (or 8.27 / Kv if `kt` is 0).
+
+| cmd | Message | Here |
+|---|---|---|
+| 0x001 | Heartbeat (TX) | axis error, axis state (1 idle, 3 calibration, 8 closed loop, 9 lockin spin = open loop), procedure result, trajectory done |
+| 0x002 | Estop | stops, fault *estop* (like ODrive: Clear_Errors before the next start) |
+| 0x003 | Get_Error | active errors (also as disarm reason) |
+| 0x006 | Set_Axis_Node_ID | v0.5 style: byte 0 = new node ID, saved (motor stopped) |
+| 0x007 | Set_Axis_State | 1 idle (stop), 8 closed loop (start in the Set_Controller_Mode mode), 9 lockin spin (open loop at the Set_Input_Vel speed), 3/4/7 calibration (R, L, encoder, pole pairs; written to flash when done) |
+| 0x009 | Get_Encoder_Estimates (TX) | position (turns, multi-turn), velocity (turns/s) |
+| 0x00B | Set_Controller_Mode | 1 torque, 2 velocity, 3 position (default 3). Takes effect at the next closed-loop start; input mode is stored only (velocity always ramps with `accel`, position always uses the trapezoid profile) |
+| 0x00C | Set_Input_Pos | absolute target (turns); vel/torque feed-forward ignored |
+| 0x00D | Set_Input_Vel | turns/s; torque feed-forward ignored |
+| 0x00E | Set_Input_Torque | Nm, limited to `imax` |
+| 0x00F | Set_Limits | velocity limit -> `rpmmax`, current limit -> `imax` |
+| 0x011 / 0x012 | Set_Traj_Vel_Limit / Accel_Limits | -> `posvmax`, `posacc` (deceleration = acceleration) |
+| 0x013 | Set_Traj_Inertia | ignored |
+| 0x014 / 0x015 / 0x017 / 0x01C / 0x01D | Get_Iq / Temperature / Bus_Voltage_Current / Torques / Powers (TX) | bus current and powers are estimated from Vd·Id + Vq·Iq (no current sensor fitted) |
+| 0x016 | Reboot | byte 0: 0 reboot, 1 save configuration (parameters + CAN settings); motor stopped |
+| 0x018 | Clear_Errors | clears the fault |
+| 0x019 | Set_Absolute_Position | the present position becomes this value (turns) |
+| 0x01A / 0x01B | Set_Pos_Gain / Set_Vel_Gains | -> `poskp` (/6), `spdkp`/`spdki` (/(60·Kt)) |
+| 0x000 | Get_Version | answered on RTR |
+
+Telemetry is sent cyclically (defaults: heartbeat 100 ms, encoder 10 ms, Iq / temperature / bus / torques 100 ms) and every
+Get_ message is also answered to an RTR request (ODrive v0.5 style). **Extra frames** (29-bit, `0x10000000 | node << 8 | index`,
+100 ms): 0 phase currents + state + fault, 1 Id/Iq/Vd/Vq, 2 speed and speed command (rpm), 3 Vbus / estimated Ibus /
+temperatures, 4 interrupt time, rejected / late samples, control owner, mode. **DBC file** with all messages and value tables:
+`can/esc_odrive_node0.dbc`; other node IDs or several nodes in one file: `python can/make_dbc.py 1` / `python can/make_dbc.py 0 1 2 3`.
+
+**USB and CAN together:** telemetry goes out on both at the same time. Control belongs to whoever started the motor
+(`status`: *control*, GUI top bar). While CAN controls it, USB set points (`tq`, `pos`, `set rpm`) answer `ERR,not_owner`;
+**stop works from both sides always**. *Take over (USB)* (`takeover`) gives the PC control without stopping the motor; CAN set
+points are then ignored until the motor stops.
+
+**CAN watchdog:** while CAN controls the motor, every frame addressed to this node resets it. No frame for `timeout`
+(default 500 ms, 0 = off) -> *coast* (outputs off) or *brake* (speed / open loop ramp to 0, torque mode brakes with half
+`imax`, max 3 s; position mode always coasts), then fault *CAN timeout* (Clear_Errors / `clear` before the next start).
+A master must therefore send something (e.g. its set point) at least every `timeout`.
+
+**Differences to a real ODrive (for porting):** control mode changes only at the next closed-loop start; input modes and
+feed-forward are not used; no SDO / endpoint access (0x004/0x005), no anticogging, no DFU; position limits / homing not
+implemented; one axis per board.
+

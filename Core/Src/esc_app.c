@@ -759,6 +759,14 @@ static void handle_line(char *line)
 #if ESC_CAN_ENABLE
     } else if (!strcmp(cmd, "can")) {
         can_print(uprintf);
+    } else if (!strcmp(cmd, "canget")) {
+        /* C,enable,node,kbps,timeout,loss,hb,enc,iq,temp,bus,torque,power,err,ext,running,err_passive,bus_off,rx,tx */
+        const can_cfg_t *c = can_cfg();
+        const can_stat_t *s = can_stat();
+        uprintf("C,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu,%lu\r\n", c->enable, c->node_id, c->kbps, c->timeout_ms,
+                c->loss_brake, c->r_hb, c->r_enc, c->r_iq, c->r_temp, c->r_bus, c->r_torque, c->r_power, c->r_err, c->r_ext,
+                s->running, s->err_passive, s->bus_off, (unsigned long)s->rx, (unsigned long)s->tx);
+        reply_ok();
     } else if (!strcmp(cmd, "canset")) {
         /* canset <enable|node|kbps|timeout|loss|hb|enc|iq|temp|bus|torque|power|err|ext> <value>: RAM, 'cansave' stores it */
         if (!a1 || !a2) { reply_err("usage"); return; }
