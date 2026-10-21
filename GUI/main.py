@@ -1923,17 +1923,43 @@ class WheelGuard(QtCore.QObject):
 
     def eventFilter(self, obj, ev):
         t = ev.type()
-        if t == QtCore.QEvent.Type.Polish and isinstance(obj, self.TYPES):
+        if t == QtCore.QEvent.Type.Polish and isinstance(obj, self.TYPES) and not isinstance(obj, QtWidgets.QScrollBar):
             obj.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)          # the wheel alone must not give them the focus
         elif t == QtCore.QEvent.Type.Wheel and isinstance(obj, QtWidgets.QWidget):
             w = obj if isinstance(obj, self.TYPES) else obj.parentWidget()  # e.g. the line edit inside a spin box
-            if isinstance(w, self.TYPES) and not w.hasFocus():
-                ev.ignore()
-                return True              # not handled: Qt passes the ignored event on to the parent (scrolls the page)
+            if isinstance(w, self.TYPES) and not isinstance(w, QtWidgets.QScrollBar) and not w.hasFocus():
+                area = w.parentWidget()                     # scroll the page instead of changing the value
+                while area is not None and not isinstance(area, QtWidgets.QAbstractScrollArea):
+                    area = area.parentWidget()
+                if area is not None:
+                    QtWidgets.QApplication.sendEvent(area.verticalScrollBar(), ev)
+                return True
         return False
 
 
+def install_crash_log():
+    """Python exceptions, hard crashes and hangs of the GUI thread (> 5 s) are written to %APPDATA%/ESC_Control/crash.log
+    with the stack traces of all threads. Returns the open file (keep it open) and its path."""
+    import faulthandler
+    import os
+    import traceback
+    d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ESC_Control")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "crash.log")
+    f = open(path, "a", buffering=1)
+    f.write("\n===== GUI started %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    faulthandler.enable(f, all_threads=True)
+
+    def hook(et, ev, tb):
+        f.write("\n--- exception %s ---\n" % time.strftime("%H:%M:%S"))
+        traceback.print_exception(et, ev, tb, file=f)
+        sys.__excepthook__(et, ev, tb)
+    sys.excepthook = hook
+    return f, path
+
+
 def main():
+    log_file, log_path = install_crash_log()
     app = QtWidgets.QApplication(sys.argv)
     wheel_guard = WheelGuard(app)
     app.installEventFilter(wheel_guard)
@@ -1941,6 +1967,12 @@ def main():
     win = MainWindow()
     win.resize(1450, 920)
     win.show()
+    # hang detector: re-armed every second by the GUI thread; if that thread is blocked for 5 s, all stacks go to crash.log
+    import faulthandler
+    hang = QtCore.QTimer()
+    hang.timeout.connect(lambda: faulthandler.dump_traceback_later(5, repeat=False, file=log_file))
+    hang.start(1000)
+    win.log_line("Crash / hang log: %s" % log_path)
     sys.exit(app.exec())
 
 

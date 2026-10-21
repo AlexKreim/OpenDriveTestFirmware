@@ -108,7 +108,10 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
 - Bottom of the window: log + command line (`on_console_send`, any firmware command, history in an editable combo box).
   Tuning tab also has the auto-tune button and the scope; Motor & Advanced has Status / Fault log / Self test buttons.
 - GUI telemetry timeout (`send_ping`): no telemetry 1 s while running -> `stop` and no more pings until telemetry returns.
-- `WheelGuard` (app-wide event filter in `main()`): the mouse wheel changes spin/combo/slider/dial only when focused.
+- `WheelGuard` (app-wide event filter in `main()`): the mouse wheel changes spin/combo/slider/dial only when focused; otherwise
+  it scrolls the page (scroll bars are excluded from the guard).
+- Crash/hang log `%APPDATA%\ESC_Control\crash.log` (`install_crash_log`): exceptions, hard crashes (faulthandler) and GUI-thread
+  hangs > 5 s with all thread stacks. Ask the owner for it after a GUI freeze.
 - Torque mode starts at 0 by design (the set point is reset at start/stop).
 - Run: `run.bat` (creates `.venv`). Exe: `build_exe.bat` (PyInstaller).
 
