@@ -192,7 +192,7 @@ void odc_rx(const can_frame_t *f)
         uint32_t s = rd_u32(d);
         if (s == ODRV_STATE_IDLE) {
             braking = false;
-            if (!usb_owns()) app_stop("CAN: axis state IDLE"); else ignored++;
+            app_stop("CAN: axis state IDLE");                 /* stop is always accepted, also while USB controls the motor */
         } else if (s == ODRV_STATE_CLOSED_LOOP) {
             start_closed_loop(false);
         } else if (s == ODRV_STATE_LOCKIN_SPIN) {
