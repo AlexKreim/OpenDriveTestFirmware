@@ -306,6 +306,32 @@ bool hw_adc_set_inj_smp(uint32_t smp)
 
 uint32_t hw_adc_inj_smp(void) { return inj_smp; }
 
+/* Diagnostics: disable ADC1/2/3, run the single-ended calibration again, re-enable and re-arm the injected conversions.
+ * Hardware trigger only, motor stopped. Nothing is stored. */
+bool hw_adc_recalibrate(void)
+{
+    if (sw_trig) return false;
+    ADC1->IER &= ~ADC_IER_JEOSIE;
+    NVIC_DisableIRQ(ADC1_2_IRQn);
+    ADC_TypeDef *ad[3] = { ADC1, ADC2, ADC3 };
+    for (int i = 0; i < 3; i++) {
+        adc_inj_stop(ad[i]);
+        if (ad[i]->CR & ADC_CR_ADSTART) {
+            ad[i]->CR |= ADC_CR_ADSTP;
+            uint32_t t = 100000;
+            while ((ad[i]->CR & ADC_CR_ADSTP) && --t) { }
+        }
+        if (ad[i]->CR & ADC_CR_ADEN) {
+            ad[i]->CR |= ADC_CR_ADDIS;
+            uint32_t t = 100000;
+            while ((ad[i]->CR & ADC_CR_ADEN) && --t) { }
+        }
+    }
+    for (int i = 0; i < 3; i++) adc_calibrate_enable(ad[i]);
+    hw_adc_use_hw_trigger(inj_sel);
+    return true;
+}
+
 void hw_adc_use_software_trigger(void)
 {
     ADC_TypeDef *adcs[3] = {ADC1, ADC2, ADC3};

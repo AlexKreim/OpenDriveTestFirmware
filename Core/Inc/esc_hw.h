@@ -27,7 +27,8 @@ bool hw_adc_sw_mode(void);
 void hw_adc_use_hw_trigger(uint32_t jextsel);
 bool     hw_adc_set_inj_smp(uint32_t smp);   /* diagnostics, RAM only: phase-current sampling time code 2..5 (hardware trigger, stopped) */
 uint32_t hw_adc_inj_smp(void);
-uint32_t hw_adc_cal_timeouts(void);         /* ADC calibrations that did not finish (diagnostics) */
+uint32_t hw_adc_cal_timeouts(void);
+bool     hw_adc_recalibrate(void);          /* diagnostics: run the ADC calibration again (hardware trigger, stopped) */         /* ADC calibrations that did not finish (diagnostics) */
 uint32_t hw_adc_trigger_sel(void);
 const char *hw_adc_trigger_name(void);
 
