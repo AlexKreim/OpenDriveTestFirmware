@@ -101,7 +101,10 @@ or `CAL,fail,<reason>`; `TUNE,ok,<J gcm2>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>`
 `adchist` added to confirm; `adcsmp` (RAM only, `hw_adc_set_inj_smp`) changes the sampling time to test it.
 Result 10-21: bin 31 is 45-60 % at every sampling time, odd codes other than 15/31 almost never occur, and codes just above a
 32-step (e.g. C above 0x51F) never occur, also at idle (`raw` C 1310-1311). So it is static: each SAR bit decision biased low
-(missing codes), not switching noise. Suspects: calibration (check CALFACT in `diag`, `adccal`), VREF+/VDDA, ADC clock. `help` printed in several uprintf calls (buffer 255 chars).
+(missing codes), not switching noise. CALFACT was fine (56-62, `adccal` no change). **Cause found 2026-10-21:** VREF+/VDDA fed
+through a 600 Ohm@100 MHz ferrite bead with the 1 uF + 100 nF on the supply side, none at the pins. Owner shorted the bead
+(caps now at the pins): bins become smooth, odd codes back, bin 31 ~0-4 %. Hardware rule: caps must sit at the VREF+/VDDA pins.
+Everything measured before (offsets, `zero`, calibration R/L, auto-tune, low-speed sticking) must be re-checked after this. `help` printed in several uprintf calls (buffer 255 chars).
 Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / float printf).
 
 ## 5. GUI (`GUI/`)
