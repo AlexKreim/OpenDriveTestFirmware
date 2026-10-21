@@ -20,9 +20,20 @@ static float dt_out = DT_OUT_NOM;
 
 /* ------------------------------------------------------------------ helpers */
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
-static float wrap_pi(float x)  { while (x > PI_F) x -= TWO_PI_F; while (x < -PI_F) x += TWO_PI_F; return x; }
-static float wrap180(float x)  { while (x > 180.0f) x -= 360.0f; while (x < -180.0f) x += 360.0f; return x; }
-static float wrap360(float x)  { while (x >= 360.0f) x -= 360.0f; while (x < 0.0f) x += 360.0f; return x; }
+/* Constant time: the position in degrees grows up to ~92000 (256 turns, see the pos_cnt shift) and a subtract-one-period
+ * loop then ran up to 256 times, twice per 20 kHz cycle. That raised the control-interrupt time with every turn until the
+ * main loop and USB starved (wrong SPI speed, lost connection after long runs). */
+static float wrap_to(float x, float lo, float per)
+{
+    if (x >= lo && x < lo + per) return x;
+    x -= per * floorf((x - lo) / per);
+    if (x >= lo + per) x -= per;              /* rounding at the edges */
+    if (x < lo) x += per;
+    return x;
+}
+static float wrap_pi(float x)  { return wrap_to(x, -PI_F, TWO_PI_F); }
+static float wrap180(float x)  { return wrap_to(x, -180.0f, 360.0f); }
+static float wrap360(float x)  { return wrap_to(x, 0.0f, 360.0f); }
 
 void foc_clarke_park(float ia, float ib, float ic, float th, float *id, float *iq)
 {

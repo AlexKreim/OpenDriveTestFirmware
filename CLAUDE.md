@@ -161,7 +161,10 @@ motor, so re-check on the 2212 before trusting or fixing the method.
 
 ## 9. Open issues / ideas
 
-1. Crash / USB root cause (see section 8); check that the new protections trigger.
+1. Crash / USB root cause (see section 8). 2026-10-21 lead: `wrap360`/`wrap180`/`wrap_pi` in `esc_foc.c` were subtract loops;
+   `pos_deg = wrap360(pos_cnt * deg)` runs every 20 kHz cycle and pos_cnt grows to 256 turns before it is shifted, so the
+   interrupt time grew with every turn (SPI speed in the GUI drifted to 4x while FOC speed was right, then USB was lost).
+   Fixed with constant-time wraps (untested on hardware). Check `status` interrupt time after > 1 min of running.
 2. Low-speed sticking at one mechanical angle (section 8); the calibration's R and L on the 2212.
 3. Weak AS5047P magnet field (MAGL).
 4. Owner wants cogging/offset compensation (Iq feed-forward vs angle) soon, not yet. On hold: bus-current/regen limit,
