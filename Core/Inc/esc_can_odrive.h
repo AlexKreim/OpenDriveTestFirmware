@@ -32,4 +32,7 @@ uint32_t odc_axis_error(void);
 uint8_t  odc_axis_state(void);
 void     odc_print(void (*pr)(const char *fmt, ...));
 
+/* extra telemetry (not in ODrive): 29-bit IDs ODC_EXT_BASE | node_id << 8 | index, little endian, see can/esc_odrive.dbc */
+#define ODC_EXT_BASE 0x10000000UL
+
 #endif

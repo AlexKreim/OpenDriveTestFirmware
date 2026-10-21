@@ -44,6 +44,7 @@ typedef struct {
 void        can_init(void);                       /* esc_app_init: load the settings, start the bus if enabled */
 void        can_task(void);                       /* main loop */
 bool        can_send(const can_frame_t *f);       /* false: TX FIFO full (counted) */
+bool        can_tx_free(void);                    /* a TX FIFO slot is free */
 can_cfg_t  *can_cfg(void);
 const can_stat_t *can_stat(void);
 bool        can_cfg_set(const char *name, float v);   /* RAM; bus restarts when needed. false: unknown name / range */

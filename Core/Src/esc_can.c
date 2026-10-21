@@ -143,6 +143,8 @@ static bool can_recv(can_frame_t *f)
     return true;
 }
 
+bool can_tx_free(void) { return st.running && !st.bus_off && !(FDCAN2->TXFQS & FDCAN_TXFQS_TFQF); }
+
 bool can_send(const can_frame_t *f)
 {
     if (!st.running || st.bus_off) return false;

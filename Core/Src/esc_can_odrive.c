@@ -31,6 +31,15 @@ static uint32_t brake_t0;
 static bool     cal_requested;
 
 static float rd_f32(const uint8_t *p) { float v; memcpy(&v, p, 4); return v; }
+static void  wr_f32(uint8_t *p, float v) { memcpy(p, &v, 4); }
+static void  wr_u32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+static void  wr_i16(uint8_t *p, float v, float scale)
+{
+    float x = v * scale;
+    int16_t i = (x > 32767.0f) ? 32767 : (x < -32768.0f ? -32768 : (int16_t)lrintf(x));
+    memcpy(p, &i, 2);
+}
+static void  wr_u16(uint8_t *p, uint32_t v) { uint16_t u = (v > 65535u) ? 65535u : (uint16_t)v; memcpy(p, &u, 2); }
 static uint32_t rd_u32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 
 static float kt_nm_per_a(void)
@@ -62,12 +71,116 @@ static void start_closed_loop(bool open_loop)
     g_vel_ext = true;
 }
 
+/* ------------------------------------------------------------------ telemetry (ODrive frames + extra 29-bit frames) */
+static uint8_t proc_result(void)
+{
+    const char *err;
+    int s = app_cal_state(&err);
+    if (s == 1) return 1u;                                          /* BUSY */
+    if (s != 3) return 0u;                                          /* SUCCESS */
+    if (!strcmp(err, "bad_resistance")) return 6u;                 /* PHASE_RESISTANCE_OUT_OF_RANGE */
+    if (!strcmp(err, "bad_inductance")) return 7u;                 /* PHASE_INDUCTANCE_OUT_OF_RANGE */
+    if (!strcmp(err, "pole_pairs"))     return 5u;                 /* POLE_PAIR_CPR_MISMATCH */
+    if (!strcmp(err, "aborted"))        return 2u;                 /* CANCELLED */
+    if (!strcmp(err, "fault"))          return 3u;                 /* DISARMED */
+    return 15u;                                                    /* NOT_CONVERGING (other calibration failures) */
+}
+
+static float elec_power(void) { return 1.5f * (g_vd * g_id + g_vq * g_iq); }
+
+/* fills the data of ODrive message 'cmd'; false: not a telemetry message */
+static bool fill(uint32_t cmd, can_frame_t *f)
+{
+    uint8_t *d = f->data;
+    memset(d, 0, 8);
+    f->len = 8;
+    float kt = kt_nm_per_a();
+    switch (cmd) {
+    case CMD_GET_VERSION:
+        d[0] = 2; d[1] = 1; d[2] = 0; d[3] = 0; d[4] = 2; d[5] = 0; d[6] = 0; d[7] = 0;     /* protocol 2, hw 1.0, fw 2.0 */
+        return true;
+    case CMD_HEARTBEAT: {
+        bool spv;
+        float sp = motor_pos_sp_turns(&spv) * 360.0f;
+        uint8_t done = (!spv || fabsf(sp - g_pos_cmd) < 0.05f) ? 1u : 0u;
+        wr_u32(d, odc_axis_error()); d[4] = odc_axis_state(); d[5] = proc_result(); d[6] = done;
+        return true;
+    }
+    case CMD_GET_ERROR:     wr_u32(d, odc_axis_error()); wr_u32(d + 4, odc_axis_error()); return true;
+    case CMD_ENCODER_EST:   wr_f32(d, motor_pos_turns()); wr_f32(d + 4, g_rpm_meas * (1.0f / 60.0f)); return true;
+    case CMD_GET_IQ:        wr_f32(d, g_iq_ref); wr_f32(d + 4, g_iq); return true;
+    case CMD_GET_TEMP:      wr_f32(d, app_temp_driver()); wr_f32(d + 4, app_temp_motor()); return true;
+    case CMD_GET_BUS: {
+        float vb = g_vbus;
+        wr_f32(d, vb); wr_f32(d + 4, (vb > 1.0f) ? elec_power() / vb : 0.0f);           /* bus current estimated from Vdq.Idq */
+        return true;
+    }
+    case CMD_GET_TORQUES:   wr_f32(d, kt * g_iq_ref); wr_f32(d + 4, kt * g_iq); return true;
+    case CMD_GET_POWERS:    wr_f32(d, elec_power()); wr_f32(d + 4, kt * g_iq * g_rpm_meas * (6.2831853f / 60.0f)); return true;
+    default: return false;
+    }
+}
+
+static void reply(uint32_t cmd)
+{
+    can_frame_t f;
+    if (!fill(cmd, &f)) return;
+    f.id = ((uint32_t)can_cfg()->node_id << 5) | cmd; f.ext = false; f.rtr = false;
+    (void)can_send(&f);
+}
+
+static bool fill_ext(uint32_t idx, can_frame_t *f)
+{
+    uint8_t *d = f->data;
+    memset(d, 0, 8);
+    f->len = 8;
+    switch (idx) {
+    case 0:  wr_i16(d, g_i[0], 100.0f); wr_i16(d + 2, g_i[1], 100.0f); wr_i16(d + 4, g_i[2], 100.0f);
+             d[6] = (uint8_t)g_state; d[7] = (uint8_t)g_fault; return true;                       /* ESC_Phase */
+    case 1:  wr_i16(d, g_id, 100.0f); wr_i16(d + 2, g_iq, 100.0f); wr_i16(d + 4, g_vd, 100.0f); wr_i16(d + 6, g_vq, 100.0f);
+             return true;                                                                         /* ESC_DQ */
+    case 2:  wr_f32(d, g_rpm_meas); wr_f32(d + 4, g_rpm_cmd); return true;                        /* ESC_Motion */
+    case 3: {                                                                                     /* ESC_Supply */
+        float vb = g_vbus;
+        wr_u16(d, (uint32_t)(vb * 1000.0f)); wr_i16(d + 2, (vb > 1.0f) ? elec_power() / vb : 0.0f, 100.0f);
+        wr_i16(d + 4, app_temp_driver(), 10.0f); wr_i16(d + 6, app_temp_motor(), 10.0f);
+        return true;
+    }
+    case 4:  wr_u16(d, (uint32_t)((float)g_isr_cycles_max * 10.0f / (float)(SYSCLK_HZ / 1000000UL)));   /* ESC_Diag */
+             wr_u16(d + 2, g_cs_rejected); wr_u16(d + 4, g_cs_late); d[6] = (uint8_t)motor_owner(); d[7] = (uint8_t)g_mode;
+             return true;
+    default: return false;
+    }
+}
+
+#define N_CYC 13
+static uint32_t cyc_last[N_CYC];
+
+static void cyclic(uint32_t now)
+{
+    const can_cfg_t *c = can_cfg();
+    static const uint8_t std_cmd[8] = { CMD_HEARTBEAT, CMD_ENCODER_EST, CMD_GET_IQ, CMD_GET_TEMP, CMD_GET_BUS,
+                                        CMD_GET_TORQUES, CMD_GET_POWERS, CMD_GET_ERROR };
+    const uint16_t rate[N_CYC] = { c->r_hb, c->r_enc, c->r_iq, c->r_temp, c->r_bus, c->r_torque, c->r_power, c->r_err,
+                                   c->r_ext, c->r_ext, c->r_ext, c->r_ext, c->r_ext };
+    for (int i = 0; i < N_CYC; i++) {
+        if (rate[i] == 0u || (now - cyc_last[i]) < rate[i]) continue;
+        if (!can_tx_free()) return;                                    /* TX FIFO full: the rest goes out next pass */
+        can_frame_t f;
+        f.rtr = false;
+        if (i < 8) { fill(std_cmd[i], &f); f.id = ((uint32_t)c->node_id << 5) | std_cmd[i]; f.ext = false; }
+        else       { fill_ext((uint32_t)(i - 8), &f); f.id = ODC_EXT_BASE | ((uint32_t)c->node_id << 8) | (uint32_t)(i - 8); f.ext = true; }
+        if (!can_send(&f)) return;
+        cyc_last[i] = now;
+    }
+}
+
 void odc_rx(const can_frame_t *f)
 {
     if (f->ext) return;
     uint32_t cmd = f->id & 0x1Fu;
     const uint8_t *d = f->data;
-    if (f->rtr) return;                                   /* requests are answered in the telemetry part */
+    if (f->rtr) { reply(cmd); return; }                  /* ODrive v0.5 style request: answer with the data frame */
 
     switch (cmd) {
     case CMD_ESTOP:
@@ -225,6 +338,7 @@ void odc_task(uint32_t now)
         else if (s == 2) cal_requested = false;
     }
     watchdog(now);
+    cyclic(now);
 }
 
 void odc_print(void (*pr)(const char *fmt, ...))
