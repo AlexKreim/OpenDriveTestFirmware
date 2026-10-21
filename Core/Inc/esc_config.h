@@ -111,4 +111,9 @@
 #define DEF_MAX_MOD        0.10f
 #define DEF_ALIGN_V        0.30f
 
+/* CAN bus (FDCAN2, ODrive CANSimple). 0 = build exactly as before CAN (no FDCAN code, no CAN commands). */
+#ifndef ESC_CAN_ENABLE
+#define ESC_CAN_ENABLE     1
+#endif
+
 #endif

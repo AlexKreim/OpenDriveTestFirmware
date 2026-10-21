@@ -45,7 +45,7 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 MEMORY
 {
   RAM    (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
-  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 504K   /* last 8 KB reserved: fault log 0x0807E000, parameters 0x0807F800 */
+  FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 500K   /* last 12 KB reserved: CAN settings 0x0807D000, fault log 0x0807E000, parameters 0x0807F800 */
 }
 
 /* Sections */

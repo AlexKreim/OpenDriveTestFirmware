@@ -151,7 +151,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 ### 3.3 Reserve the parameter and fault-log flash pages
 
 The settings live in the last 2 KB of flash (0x0807F800), the fault log at 0x0807E000. In the linker script
-`STM32G474RETX_FLASH.ld` set `FLASH ... LENGTH` to **`504K`** (done in this repo). Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
+`STM32G474RETX_FLASH.ld` set `FLASH ... LENGTH` to **`500K`** (done in this repo; the CAN settings use 0x0807D000). Re-flashing from CubeIDE keeps the saved settings; a full chip erase removes them.
 `HAL_FLASH_MODULE_ENABLED` must be on in `stm32g4xx_hal_conf.h` (it is by default).
 
 ### 3.4 Compiler settings (important)

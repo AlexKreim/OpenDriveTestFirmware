@@ -4,6 +4,7 @@
 #include "esc_params.h"
 #include "esc_flash.h"
 #include "esc_faultlog.h"
+#include "esc_can.h"
 #include "stm32g4xx_hal.h"
 #include "usbd_cdc_if.h"
 #include "usbd_cdc.h"
@@ -570,6 +571,7 @@ static void handle_line(char *line)
         uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg abs> | setpos [deg] | calibrate | tune [bw_hz]\r\n");
         uprintf("focdump | faultlog [clear] | adchist [start|stop] | adcsmp [12|24|47|92] | adccal | scope [div|state|stop|dump]\r\n");
         uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
+        uprintf("can | canset <enable|node|kbps|timeout|loss|hb|enc|iq|temp|bus|torque|power|err|ext> <value> | cansave\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
     } else if (!strcmp(cmd, "led")) {
@@ -692,6 +694,19 @@ static void handle_line(char *line)
         if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }   /* absolute degrees, +-1000 turns */
         g_pos_cmd = v;
         reply_ok();
+#if ESC_CAN_ENABLE
+    } else if (!strcmp(cmd, "can")) {
+        can_print(uprintf);
+    } else if (!strcmp(cmd, "canset")) {
+        /* canset <enable|node|kbps|timeout|loss|hb|enc|iq|temp|bus|torque|power|err|ext> <value>: RAM, 'cansave' stores it */
+        if (!a1 || !a2) { reply_err("usage"); return; }
+        if ((!strcmp(a1, "node") || !strcmp(a1, "kbps") || !strcmp(a1, "enable")) && motor_running()) { reply_err("motor_running"); return; }
+        if (can_cfg_set(a1, strtof(a2, NULL))) reply_ok(); else reply_err("invalid");
+    } else if (!strcmp(cmd, "cansave")) {
+        if (motor_running()) { reply_err("motor_running"); return; }
+        flash_res_t r = can_cfg_save();
+        if (r == FLASH_RES_OK) reply_ok(); else reply_err(flash_res_name(r));
+#endif
     } else if (!strcmp(cmd, "setpos")) {
         /* setpos <deg>: the present position becomes <deg> (like ODrive Set_Absolute_Position); without argument: print it */
         if (a1) {
@@ -919,6 +934,7 @@ void esc_app_init(void)
 #endif
     motor_init();
     flog_init(reset_code);
+    can_init();                                     /* FDCAN2, settings from their own flash page */
     (void)hw_enc_detect(NULL, NULL, NULL);          /* ABI counts per revolution from the AS5047P settings */
     flash_image_t img;
     bool have_image = flash_image_load(&img);
@@ -959,6 +975,7 @@ void esc_app_loop(void)
     stream_task();
     cal_task();
     tune_task();
+    can_task();
     scope_task();
     flog_task(motor_running());
     led_task();
