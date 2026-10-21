@@ -185,7 +185,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         split.addWidget(self._build_left())
-        split.addWidget(self._build_right())
+        split.addWidget(self._scrolled(self._build_right()))     # scrolls instead of forcing a window taller than a laptop screen
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([430, 960])
@@ -303,9 +303,9 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ left panel
     def _build_left(self):
         self.tabs = QtWidgets.QTabWidget()
-        self.tab_speed = self._tab_speed()
-        self.tab_torque = self._tab_torque()
-        self.tab_pos = self._tab_position()
+        self.tab_speed = self._scrolled(self._tab_speed())
+        self.tab_torque = self._scrolled(self._tab_torque())
+        self.tab_pos = self._scrolled(self._tab_position())
         self.tabs.addTab(self.tab_speed, "Speed")
         self.tabs.addTab(self.tab_torque, "Torque")
         self.tabs.addTab(self.tab_pos, "Position")
@@ -2129,7 +2129,8 @@ def main():
     app.installEventFilter(wheel_guard)
     pg.setConfigOptions(antialias=False)
     win = MainWindow()
-    win.resize(1450, 920)
+    avail = app.primaryScreen().availableGeometry()           # laptop screens / 150 % scaling: never larger than the screen
+    win.resize(min(1450, avail.width() - 20), min(920, avail.height() - 60))
     win.show()
     # hang detector: re-armed every second by the GUI thread; if that thread is blocked for 5 s, all stacks go to crash.log
     import faulthandler
