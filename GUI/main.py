@@ -49,6 +49,8 @@ START_STYLE = "QPushButton { background-color: #2e7d32; color: white; font-weigh
 
 ERR_TEXT = {
     "motor_running": "The motor is running. Stop it first.",
+    "not_owner": "The motor is controlled over CAN. Press 'Take over' to control it from here.",
+    "flash_limit": "Flash write refused by the wear guard (too many or too fast writes). It is kept in RAM; try again later or after a reboot.",
     "no_saved_data": "Nothing valid is stored in flash yet.",
     "flash_erase": "Flash erase failed.",
     "flash_program": "Flash programming failed.",
@@ -245,6 +247,14 @@ class MainWindow(QtWidgets.QMainWindow):
         f.setBold(True)
         self.state_label.setFont(f)
         bar.addWidget(self.state_label)
+        bar.addSpacing(20)
+        self.owner_label = QtWidgets.QLabel("")
+        bar.addWidget(self.owner_label)
+        self.btn_takeover = QtWidgets.QPushButton("Take over (USB)")
+        self.btn_takeover.setToolTip("The motor is controlled over CAN. Take the set points over to this program; the motor keeps "
+                                     "running at its present speed / torque / position, CAN commands are ignored until it stops.")
+        self.btn_takeover.clicked.connect(lambda _=False: self.on_takeover())
+        bar.addWidget(self.btn_takeover)
         bar.addStretch(1)
         self.btn_clear = QtWidgets.QPushButton("Clear fault")
         self.btn_clear.clicked.connect(lambda _=False: self.link.send("clear"))
@@ -1459,6 +1469,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._store_preset(d, replace=base if base.get("_user") else None)
         return name
 
+    def on_takeover(self):
+        if self.connected():
+            self.link.send("takeover")
+            self.link.send("get")                       # the CAN speed became the 'rpm' parameter
+            self.log_line("Took over control from CAN.")
+
     # ------------------------------------------------------------------ fault log
     def on_faultlog(self, d):
         flash = {"ok": "written to flash", "none": "nothing written since power-on", "pending": "waiting to be written (motor running)",
@@ -1775,6 +1791,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.rec_writer is not None:
             self.rec_writer.writerow(P.telemetry_csv_row(row))
             self.rec_rows += 1
+        if s.get("owner") != getattr(self, "_last_owner", None):
+            self._last_owner = s.get("owner")
+            self.update_enabled()                        # control owner changed (Take over button)
         if s["state"] != self.state or s["fault"] != self.fault:
             was_running = self.running()
             self.state, self.fault = s["state"], s["fault"]
@@ -1795,6 +1814,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for b in self.start_btns:
             b.setEnabled(con and not run and self.state != P.ST_FAULT)
         self.btn_calib.setEnabled(con and not run and self.state != P.ST_FAULT)
+        own = self.sample.get("owner") if self.sample else None
+        self.btn_takeover.setVisible(con and own == 2)
+        self.owner_label.setText(("Control: " + P.OWNER_NAMES[own]) if (con and own is not None and own < len(P.OWNER_NAMES) and run) else "")
         self.btn_tune.setEnabled(con and not run and self.state != P.ST_FAULT)
         self.btn_step.setEnabled(con and not self.step_active and self.state != P.ST_FAULT)
         self.btn_step_stop.setEnabled(self.step_active)

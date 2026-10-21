@@ -299,13 +299,14 @@ static void stream_task(void)
     long ang = err ? -1L : CENTI(pw >= 360.0f ? 0.0f : pw);                  /* 0.01 deg, 0..360 */
     bool spv;
     float psp = motor_pos_sp_turns(&spv) * 360.0f;
-    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld\r\n",
+    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d\r\n",
             (unsigned long)now, (int)g_state, (int)g_fault, MILLI(g_vbus),
             MILLI(g_i[0]), MILLI(g_i[1]), MILLI(g_i[2]),
             CENTI(g_rpm_cmd), CENTI(rpm_spi), CENTI(g_rpm_meas), ang,
             (long)(temp_drv * 10.0f), (long)(temp_mot * 10.0f), MILLI(g_v_ll),
             (int)g_mode, MILLI(g_id * 1.0f), MILLI(g_iq * 1.0f), MILLI(g_imag), MILLI(g_iq_ref),
-            (g_pos_sp < 0.0f) ? -1L : CENTI(g_pos_sp), MILLI(g_vd), MILLI(g_vq), CENTI(pu), spv ? CENTI(psp) : -2147483647L);
+            (g_pos_sp < 0.0f) ? -1L : CENTI(g_pos_sp), MILLI(g_vd), MILLI(g_vq), CENTI(pu), spv ? CENTI(psp) : -2147483647L,
+            (int)motor_owner());
 }
 
 /* ------------------------------------------------------------------ tests */
@@ -461,6 +462,7 @@ static void print_status(void)
     static const char *mn[] = {"open loop", "torque (FOC)", "speed (FOC)", "position (FOC)"};
     uprintf("state %s, fault %s, Vbus %s V, Ibus %s A\r\n", sn[g_state], fn[g_fault], ff(g_vbus), ff(hw_ibus_a()));
     uprintf("last stop: %s, last MCU reset: %s, uptime %lu s\r\n", stop_reason, reset_cause, (unsigned long)(HAL_GetTick() / 1000u));
+    uprintf("control: %s\r\n", motor_owner() == SRC_CAN ? "CAN" : (motor_owner() == SRC_USB ? "USB" : "none (stopped)"));
     uprintf("flash writes since boot: parameters %lu/100, fault log %lu/50, CAN config %lu/50\r\n",
             (unsigned long)flash_writes(FLASH_PG_PARAMS), (unsigned long)flash_writes(FLASH_PG_FAULTLOG), (unsigned long)flash_writes(FLASH_PG_CANCFG));
     if (g_oc_last_ph >= 0) uprintf("last sample above the overcurrent level: phase %c, %s A (raw %u)\r\n", 'A' + g_oc_last_ph, ff(g_oc_last_a), (unsigned)g_oc_last_raw);
@@ -568,7 +570,7 @@ static void handle_line(char *line)
     if (!strcmp(cmd, "help")) {
         /* one line per call: uprintf's buffer holds 255 characters */
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n");
-        uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg abs> | setpos [deg] | calibrate | tune [bw_hz]\r\n");
+        uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg abs> | setpos [deg] | takeover | calibrate | tune [bw_hz]\r\n");
         uprintf("focdump | faultlog [clear] | adchist [start|stop] | adcsmp [12|24|47|92] | adccal | scope [div|state|stop|dump]\r\n");
         uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("can | canset <enable|node|kbps|timeout|loss|hb|enc|iq|temp|bus|torque|power|err|ext> <value> | cansave\r\n");
@@ -673,8 +675,12 @@ static void handle_line(char *line)
         else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)      why = "bus_voltage";
         else if (g_mode != MODE_OPEN && g_par.enc_dir == 0)       why = "no_enc_cal";
         if (why) reply_err(why);
-        else if (motor_start()) reply_ok();
+        else if (motor_start()) { motor_set_owner(SRC_USB); reply_ok(); }
         else reply_err("refused");
+    } else if (!strcmp(cmd, "takeover")) {
+        /* the PC takes the set points from CAN (motor keeps running at the present speed / torque / position) */
+        motor_takeover_usb();
+        reply_ok();
     } else if (!strcmp(cmd, "mode")) {
         if (!a1) { uprintf("mode %d\r\n", (int)g_mode); return; }
         int m = atoi(a1);
@@ -686,12 +692,14 @@ static void handle_line(char *line)
         if (!a1) { reply_err("usage"); return; }
         float v = strtof(a1, NULL);
         if (v != v || v > g_par.i_max || v < -g_par.i_max) { reply_err("range"); return; }
+        if (motor_owner() == SRC_CAN) { reply_err("not_owner"); return; }
         g_tq_cmd = v;
         reply_ok();
     } else if (!strcmp(cmd, "pos")) {
         if (!a1) { reply_err("usage"); return; }
         float v = strtof(a1, NULL);
         if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }   /* absolute degrees, +-1000 turns */
+        if (motor_owner() == SRC_CAN) { reply_err("not_owner"); return; }
         g_pos_cmd = v;
         reply_ok();
 #if ESC_CAN_ENABLE
@@ -724,6 +732,7 @@ static void handle_line(char *line)
         else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)   why = "bus_voltage";
         if (!why && !motor_cal_start())                        why = "refused";
         if (why) { reply_err(why); return; }
+        motor_set_owner(SRC_USB);
         cal_active = true;
         reply_ok();
     } else if (!strcmp(cmd, "tune")) {
@@ -738,6 +747,7 @@ static void handle_line(char *line)
         else if (g_par.enc_dir == 0)                              why = "no_enc_cal";
         if (!why && !motor_tune_start())                          why = "refused";
         if (why) { reply_err(why); return; }
+        motor_set_owner(SRC_USB);
         tune_bw = bw;
         tune_active = true;
         reply_ok();
@@ -879,6 +889,7 @@ static void handle_line(char *line)
         if (params_set_name(&g_par, nm)) reply_ok(); else reply_err("invalid");
     } else if (!strcmp(cmd, "set")) {
         if (!a1 || !a2) { reply_err("usage"); return; }
+        if (!strcmp(a1, "rpm") && motor_owner() == SRC_CAN) { reply_err("not_owner"); return; }   /* CAN sets the speed */
         if (motor_running() && (!strcmp(a1, "pp") || !strcmp(a1, "six") || !strcmp(a1, "dir") || !strcmp(a1, "encdir"))) {
             reply_err("motor_running");          /* these must not change while the motor is driven */
             return;

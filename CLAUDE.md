@@ -84,6 +84,9 @@ Key mechanisms:
   counts, multi-turn) is followed by the ISR during FOC (`foc.turns_base*16384 + pos_cnt`) and by the main loop otherwise
   (`motor_mt_track`, 2 ms). User frame = mt_abs/16384 - `pos_off_turns` (`setpos`). foc_step position mode no longer wraps
   (shortest way removed); `turns_base` keeps the absolute count across the float shift. Telemetry T has 2 extra fields.
+- **Control owner** (`motor_set_owner`/`motor_owner`, esc_motor.c): whoever starts owns the set points (USB: tq/pos/`set rpm`
+  -> `ERR,not_owner` while CAN owns); stop always works. `takeover` copies the CAN speed into `rpm` and gives USB control.
+  CAN speed comes in via `g_vel_ext`/`g_vel_ext_rpm` (used by foc_tick and open loop instead of rpm x dir). Telemetry field 25 = owner.
 - Outer loops use the measured time between ticks (`foc_in_t.dt` from the DWT cycle counter), so skipped periods do not
   distort the speed.
 - Current loop gains auto: Kp = 2 pi `curbw` Ls, Ki = 2 pi `curbw` Rs (Ls = `ll`/2, Rs = `rl`/2).

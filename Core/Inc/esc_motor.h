@@ -73,6 +73,14 @@ void  motor_mt_track(uint16_t enc);         /* main loop: fresh 14-bit angle whi
 float motor_pos_turns(void);                /* user frame, turns */
 void  motor_set_pos_turns(float turns);     /* the present position becomes 'turns' (position target moves with it) */
 float motor_pos_sp_turns(bool *valid);      /* position-mode profile set point, user frame */
+/* Control source: whoever starts the motor owns the set points until it stops; stop / estop are always accepted.
+ * The USB GUI can take over a motor that CAN started (motor_takeover_usb). */
+typedef enum { SRC_NONE = 0, SRC_USB = 1, SRC_CAN = 2 } ctl_src_t;
+void      motor_set_owner(ctl_src_t s);      /* after a successful start / calibration */
+ctl_src_t motor_owner(void);                 /* SRC_NONE while stopped */
+void      motor_takeover_usb(void);          /* CAN speed set point -> 'rpm' parameter, then USB owns the motor */
+extern volatile bool  g_vel_ext;             /* speed / open-loop set point from CAN instead of the 'rpm' parameter */
+extern volatile float g_vel_ext_rpm;         /* signed rpm, sensor frame */
 bool  motor_angle(uint16_t *a);             /* last angle read by the control interrupt (valid while FOC / calibration runs) */
 bool  motor_foc_active(void);
 int   motor_foc_log_count(void);            /* FOC samples kept for the last fault (diagnostics) */

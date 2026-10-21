@@ -26,6 +26,9 @@ volatile uint16_t    g_raw[3];
 volatile esc_mode_t  g_mode      = MODE_OPEN;
 volatile float       g_tq_cmd    = 0.0f;
 volatile float       g_pos_cmd   = 0.0f;
+volatile bool        g_vel_ext   = false;
+volatile float       g_vel_ext_rpm = 0.0f;
+static volatile ctl_src_t owner = SRC_NONE;
 volatile float       g_id, g_iq, g_imag, g_iq_ref, g_pos_sp, g_vd, g_vq;
 
 #define FOC_LOG_N 100
@@ -201,7 +204,7 @@ static bool foc_tick(const foc_in_t *in)
     }
     foc_cmd_t cmd;
     cmd.tq_a = tune_request ? tune.tq : g_tq_cmd;
-    cmd.rpm = g_par.rpm * (float)g_par.dir;
+    cmd.rpm = g_vel_ext ? g_vel_ext_rpm : g_par.rpm * (float)g_par.dir;
     cmd.pos_deg = g_pos_cmd + (pos_off_turns - (float)foc.turns_base) * 360.0f;     /* user frame -> FOC frame */
     bool step_ok = foc_step(&foc, in, &cmd, &g_par, &g_eff);
     if (!foc_log_frozen) {
@@ -293,13 +296,18 @@ static void motor_tick(void)
 
     case ST_RUN: {
         if (run_mode != MODE_OPEN) break;
-        float tgt  = fminf(fabsf(g_par.rpm), g_eff.rpm_limit);
+        /* signed set point: 'rpm' x 'dir' from USB, or the CAN speed. A sign change ramps to 0 first, then reverses. */
+        static float ol_dir = 1.0f;
+        float sp = g_vel_ext ? g_vel_ext_rpm : g_par.rpm * (float)g_par.dir;
+        float sp_dir = (sp < 0.0f) ? -1.0f : 1.0f;
+        if (rpm_cur == 0.0f) ol_dir = sp_dir;
+        float tgt  = (sp_dir == ol_dir) ? fminf(fabsf(sp), g_eff.rpm_limit) : 0.0f;
         float step = g_par.accel * TS;
         if (rpm_cur < tgt)      { rpm_cur += step; if (rpm_cur > tgt) rpm_cur = tgt; }
         else if (rpm_cur > tgt) { rpm_cur -= step; if (rpm_cur < tgt) rpm_cur = tgt; }
-        g_rpm_cmd = rpm_cur * (float)g_par.dir;
+        g_rpm_cmd = rpm_cur * ol_dir;
 
-        float w = rpm_cur * (1.0f / 60.0f) * TWO_PI * (float)g_par.pole_pairs * (float)g_par.dir;
+        float w = rpm_cur * (1.0f / 60.0f) * TWO_PI * (float)g_par.pole_pairs * ol_dir;
         theta += w * TS;
         if (theta >= TWO_PI) theta -= TWO_PI;
         if (theta < 0.0f)    theta += TWO_PI;
@@ -471,6 +479,7 @@ void motor_fault(esc_fault_t f)
     g_tq_cmd = 0.0f;
     cal_request = false;
     tune_request = false; tune_arm = false;
+    g_vel_ext = false;
 }
 
 void motor_clear_fault(void)
@@ -620,9 +629,29 @@ bool motor_foc_active(void)
     return (s == ST_PRECHARGE || s == ST_ALIGN || s == ST_RUN || s == ST_CALIB) && (run_mode != MODE_OPEN || cal_request);
 }
 
+void motor_set_owner(ctl_src_t s) { owner = s; }
+
+ctl_src_t motor_owner(void)
+{
+    esc_state_t s = g_state;
+    return (s == ST_PRECHARGE || s == ST_ALIGN || s == ST_RUN || s == ST_CALIB) ? owner : SRC_NONE;
+}
+
+void motor_takeover_usb(void)
+{
+    if (owner == SRC_CAN && g_vel_ext) {
+        /* keep the present speed: the CAN set point becomes the 'rpm' parameter (only if the direction matches) */
+        float v = g_vel_ext_rpm * (float)g_par.dir;
+        g_par.rpm = (v > 0.0f) ? v : 0.0f;
+    }
+    g_vel_ext = false;
+    owner = SRC_USB;
+}
+
 void motor_stop(void)
 {
     if (g_state != ST_FAULT) g_state = ST_IDLE;
+    g_vel_ext = false;
     cal_request = false;
     tune_request = false; tune_arm = false;
     g_tq_cmd = 0.0f;
