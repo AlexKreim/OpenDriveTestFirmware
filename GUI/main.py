@@ -491,8 +491,9 @@ class MainWindow(QtWidgets.QMainWindow):
         lay = QtWidgets.QVBoxLayout(w)
         note = QtWidgets.QLabel("Position control (FOC), like ODrive: the target is an absolute, multi-turn position "
                                 "(360 deg = one turn, 720 = two turns, ...). The shaft moves there with the speed and acceleration "
-                                "limits of the Tuning tab and holds it. It starts by holding the position it has. The dial sets "
-                                "the angle within the target's turn.")
+                                "limits of the Tuning tab and holds it. It starts by holding the position it has. The dial moves to "
+                                "that angle on the turn nearest to the shaft. After many turns use 'Set current position as 0': "
+                                "far from 0 the float resolution gets coarser (about 0.1 deg at 4000 turns).")
         note.setWordWrap(True)
         lay.addWidget(note)
         self.pos_live = QtWidgets.QLabel("Shaft angle: ---")
@@ -506,7 +507,7 @@ class MainWindow(QtWidgets.QMainWindow):
         g = QtWidgets.QGroupBox("Target position (absolute, multi-turn)")
         form = QtWidgets.QFormLayout(g)
         self.pos_spin = QtWidgets.QDoubleSpinBox()
-        self.pos_spin.setRange(-360000, 360000)
+        self.pos_spin.setRange(-36000000, 36000000)      # +-100000 turns, same limit as the firmware
         self.pos_spin.setDecimals(1)
         self.pos_spin.setSuffix(" deg")
         self.pos_spin.setKeyboardTracking(False)
@@ -1379,9 +1380,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.link.send("tq %.4f" % self.torque_a())
 
     def _dial_to_spin(self, v):
-        base = 360.0 * (self.pos_spin.value() // 360.0)         # keep the turn of the present target
+        # the dial angle on the turn nearest to where the shaft is now (shortest way to that angle)
+        p = self.position_now()
+        if p is None:
+            p = self.pos_spin.value()
+        k = round((p - float(v)) / 360.0)
         self.pos_spin.blockSignals(True)
-        self.pos_spin.setValue(base + float(v))
+        self.pos_spin.setValue(360.0 * k + float(v))
         self.pos_spin.blockSignals(False)
         self.on_pos_changed()
 

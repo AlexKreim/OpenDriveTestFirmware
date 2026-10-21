@@ -752,7 +752,7 @@ static void handle_line(char *line)
     } else if (!strcmp(cmd, "pos")) {
         if (!a1) { reply_err("usage"); return; }
         float v = strtof(a1, NULL);
-        if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }   /* absolute degrees, +-1000 turns */
+        if (v != v || v < -36000000.0f || v > 36000000.0f) { reply_err("range"); return; }   /* absolute degrees, +-100000 turns */
         if (motor_owner() == SRC_CAN) { reply_err("not_owner"); return; }
         g_pos_cmd = v;
         reply_ok();
@@ -781,7 +781,7 @@ static void handle_line(char *line)
         /* setpos <deg>: the present position becomes <deg> (like ODrive Set_Absolute_Position); without argument: print it */
         if (a1) {
             float v = strtof(a1, NULL);
-            if (v != v || v < -360000.0f || v > 360000.0f) { reply_err("range"); return; }
+            if (v != v || v < -36000000.0f || v > 36000000.0f) { reply_err("range"); return; }
             motor_set_pos_turns(v / 360.0f);
         }
         uprintf("position %s deg (%s turns)\r\n", ff(motor_pos_turns() * 360.0f), ff(motor_pos_turns()));
