@@ -548,7 +548,7 @@ static void handle_line(char *line)
         /* one line per call: uprintf's buffer holds 255 characters */
         uprintf("help | status | get | test | diag | raw | gates | zero [ram] | start | stop | clear | enc [ms] | ver\r\n");
         uprintf("mode 0|1|2|3 (open loop|torque|speed|position) | tq <A> | pos <deg> | calibrate | tune [bw_hz]\r\n");
-        uprintf("focdump | faultlog [clear] | adchist [start|stop] | scope [div|state|stop|dump]\r\n");
+        uprintf("focdump | faultlog [clear] | adchist [start|stop] | adcsmp [12|24|47|92] | scope [div|state|stop|dump]\r\n");
         uprintf("set <name> <value> | setname <text> | save | load | factory | stream <hz> | wd <ms> | ping | led r|g|b|off|auto | bemf 0|1\r\n");
         uprintf("names: pp six dir auto kv rpm accel boost maxmod ilim alignv alignms rl ll kt idrive rpmmax\r\n"
                 "       curbw curkp curki curauto spdkp spdki poskp poski poskd posvmax posacc imax ialign ical otdrv otdrven otmot otmoten encdir\r\n");
@@ -743,6 +743,18 @@ static void handle_line(char *line)
             if (div < 1 || div > 50) { reply_err("range"); return; }
             motor_scope_arm(div);
         }
+        reply_ok();
+    } else if (!strcmp(cmd, "adcsmp")) {
+        /* adcsmp [12|24|47|92]: phase-current ADC sampling time in cycles, RAM only (boot = 12.5) */
+        static const char *cyc[] = {"2.5", "6.5", "12.5", "24.5", "47.5", "92.5", "247.5", "640.5"};
+        if (a1) {
+            int c = atoi(a1);
+            uint32_t smp = (c == 12) ? 2u : (c == 24) ? 3u : (c == 47) ? 4u : (c == 92) ? 5u : 0u;
+            if (!smp)                     { reply_err("range"); return; }
+            if (motor_running())          { reply_err("motor_running"); return; }
+            if (!hw_adc_set_inj_smp(smp)) { reply_err("software_trigger"); return; }
+        }
+        uprintf("adcsmp %s cycles (boot default 12.5, not stored)\r\n", cyc[hw_adc_inj_smp() & 7u]);
         reply_ok();
     } else if (!strcmp(cmd, "adchist")) {
         /* adchist start | stop | (no argument: print). Lowest 5 bits of the phase-current ADC codes while the motor is driven. */

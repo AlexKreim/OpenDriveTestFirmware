@@ -402,6 +402,7 @@ Commands answer `OK` or `ERR,<reason>`.
 | `focdump` | Last 100 FOC samples: `F,<n>,...` |
 | `scope [div]`, `scope state\|stop\|dump` | 2 kHz capture of the FOC loops (section 9) |
 | `adchist start`, run, `adchist` | Histogram of the lowest 5 bits of the phase-current ADC codes while driven: `H,n,...`, per phase bin 31 / bin 0 / largest bin in %, then 32 counts. Even codes give ~3.1 % per bin |
+| `adcsmp [12\|24\|47\|92]` | Test only: phase-current ADC sampling time in cycles (hardware trigger, motor stopped). Not stored, every boot starts with 12.5 |
 | `faultlog [clear]` | Fault log (section 10): `L,count,<n>,boot,<b>` then `L,<i>,...` lines |
 | `stream <hz>` | Telemetry `T,...` lines (22 fields, see `protocol.py`) |
 | `wd <ms>`, `ping` | Host watchdog |

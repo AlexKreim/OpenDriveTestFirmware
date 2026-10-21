@@ -98,7 +98,7 @@ Protocol: newline-terminated text. Replies `OK` / `ERR,<reason>`; `P,<name>,<val
 or `CAL,fail,<reason>`; `TUNE,ok,<J gcm2>,<Tf mNm>,<spdkp>,<spdki>,<poskp>,<bw>` or `TUNE,fail,<reason>`; `focdump` lines `F,<i>,ia,ib,ic,id,iq,vd,vq,theta_e_deg,id_ref,iq_ref,enc_raw,enc_ok`; `scope dump` lines
 `S,count,<n>,<us>`, `S,<i>,rpm,rpm_sp,iq,iq_ref,id,vq,pos`, `S,end,<n>`; `faultlog` lines `L,count,<n>,boot,<b>`, `L,<i>,...`; `adchist` lines `H,...`.
 2026-10-21: focdump currents cluster on 32-count steps (codes ending in binary 11111, errors up to ~1.9 A per phase while switching);
-`adchist` added to confirm. `help` printed in several uprintf calls (buffer 255 chars).
+`adchist` added to confirm; `adcsmp` (RAM only, `hw_adc_set_inj_smp`) changes the sampling time to test it. `help` printed in several uprintf calls (buffer 255 chars).
 Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / float printf).
 
 ## 5. GUI (`GUI/`)

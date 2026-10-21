@@ -119,10 +119,11 @@ static void adc_calibrate_enable(ADC_TypeDef *a)
  *   1 = TIM1_CC4, 8 = TIM1_TRGO2. TRGO2 is set to OC4REF (TIM1_CR2.MMS2 = 0111), the route ST's motor-control library uses.
  * The boot check tries TRGO2 first, then CC4, and only then falls back to the software start (see esc_app.c). */
 static uint32_t inj_sel = ADC_TRIG_TRGO2;
+static uint32_t inj_smp = 2u;                 /* SMP code of the phase-current channels: 2 = 12.5 cycles (default, RAM only) */
 
 static void adc_inj_arm(ADC_TypeDef *a, uint32_t ch)
 {
-    adc_smp(a, ch, 2u);                       /* 12.5 cycles, op-amp output is low impedance */
+    adc_smp(a, ch, inj_smp);                  /* 12.5 cycles by default, op-amp output is low impedance */
     /* JEXTEN = 1: rising edge (OC4REF rises at CNT = CCR4 while counting up, just before the PWM peak) */
     a->JSQR = (ch << ADC_JSQR_JSQ1_Pos) | (1u << ADC_JSQR_JEXTEN_Pos) | (inj_sel << ADC_JSQR_JEXTSEL_Pos);
     a->CR |= ADC_CR_JADSTART;
@@ -286,6 +287,20 @@ void hw_adc_use_hw_trigger(uint32_t jextsel)
     NVIC_SetPriority(ADC1_2_IRQn, 1);
     NVIC_EnableIRQ(ADC1_2_IRQn);
 }
+
+/* Diagnostics: sampling time of the three phase-current channels, SMP code 2..5 = 12.5 / 24.5 / 47.5 / 92.5 ADC cycles
+ * (0.29 / 0.58 / 1.12 / 2.18 us at 42.5 MHz). Hardware trigger only (re-arms the injected conversions), motor stopped.
+ * Not stored: every boot starts with 12.5 cycles. At 92.5 cycles the sampling still ends ~1.6 us after the PWM peak, inside
+ * the window in which all low sides are on (duty <= 0.9: +-2.5 us around the peak). */
+bool hw_adc_set_inj_smp(uint32_t smp)
+{
+    if (smp < 2u || smp > 5u || sw_trig) return false;
+    inj_smp = smp;
+    hw_adc_use_hw_trigger(inj_sel);
+    return true;
+}
+
+uint32_t hw_adc_inj_smp(void) { return inj_smp; }
 
 void hw_adc_use_software_trigger(void)
 {
