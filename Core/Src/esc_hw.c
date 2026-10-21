@@ -102,12 +102,16 @@ static void adc_power_up(ADC_TypeDef *a)
     for (volatile uint32_t i = 0; i < 8000; i++) { __NOP(); }   /* > 20 us regulator startup */
 }
 
+static uint32_t adc_cal_to;                    /* calibrations that timed out (diagnostics) */
+uint32_t hw_adc_cal_timeouts(void) { return adc_cal_to; }
+
 static void adc_calibrate_enable(ADC_TypeDef *a)
 {
     a->CR &= ~ADC_CR_ADCALDIF;
     a->CR |= ADC_CR_ADCAL;
     uint32_t t = 1000000;
     while ((a->CR & ADC_CR_ADCAL) && --t) { }
+    if (t == 0u) adc_cal_to++;
     for (volatile uint32_t i = 0; i < 200; i++) { __NOP(); }
     a->ISR = ADC_ISR_ADRDY;
     a->CR |= ADC_CR_ADEN;

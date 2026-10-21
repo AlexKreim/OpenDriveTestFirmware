@@ -403,6 +403,18 @@ static void print_diag(void)
                     i + 1, (unsigned long)c, (unsigned)(c & 1u), (unsigned)((c >> 2) & 3u), (unsigned)((c >> 5) & 3u), g, gn[g & 7u], conn);
         }
     }
+    {
+        /* calibration factor (single-ended CALFACT_S, differential CALFACT_D): 0 means the calibration did not run or failed */
+        ADC_TypeDef *ad[3] = { ADC1, ADC2, ADC3 };
+        for (int i = 0; i < 3; i++)
+            uprintf("ADC%d CALFACT_S %lu CALFACT_D %lu, RES %lu (0 = 12 bit), DIFSEL %08lX, OFR1 %08lX, ADEN %lu\r\n", i + 1,
+                    (unsigned long)(ad[i]->CALFACT & 0x7Fu), (unsigned long)((ad[i]->CALFACT >> 16) & 0x7Fu),
+                    (unsigned long)((ad[i]->CFGR >> 3) & 3u), (unsigned long)ad[i]->DIFSEL, (unsigned long)ad[i]->OFR1,
+                    (unsigned long)(ad[i]->CR & 1u));
+        uprintf("ADC12 CCR %08lX, ADC345 CCR %08lX (CKMODE 3 = HCLK/4), VREFBUF CSR %08lX, adc cal timeouts %lu\r\n",
+                (unsigned long)ADC12_COMMON->CCR, (unsigned long)ADC345_COMMON->CCR, (unsigned long)VREFBUF->CSR,
+                (unsigned long)hw_adc_cal_timeouts());
+    }
     uprintf("trigger mode %s, cal samples %lu, ADC irq enabled %lu pending %lu, boot ADC check %s\r\n", hw_adc_trigger_name(),
             (unsigned long)motor_cal_count(), (unsigned long)NVIC_GetEnableIRQ(ADC1_2_IRQn),
             (unsigned long)NVIC_GetPendingIRQ(ADC1_2_IRQn), adc_fail ? "FAILED" : "ok");
