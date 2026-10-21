@@ -232,7 +232,8 @@ def install():
     widgets = types.ModuleType("PySide6.QtWidgets")
     for n in ("QMainWindow", "QWidget", "QVBoxLayout", "QHBoxLayout", "QGridLayout", "QFormLayout", "QSplitter",
               "QGroupBox", "QScrollArea", "QFrame", "QLabel", "QPushButton", "QComboBox", "QDoubleSpinBox", "QSpinBox", "QSlider",
-              "QDial", "QRadioButton", "QCheckBox", "QPlainTextEdit", "QApplication"):
+              "QDial", "QRadioButton", "QCheckBox", "QPlainTextEdit", "QApplication", "QButtonGroup",
+              "QAbstractSpinBox", "QAbstractSlider", "QScrollBar", "QAbstractScrollArea"):
         setattr(widgets, n, type(n, (Base,), {}))
     widgets.QTabWidget = TabWidget
     widgets.QFrame.Shape = type("Shape", (), {"NoFrame": 0})
@@ -243,6 +244,8 @@ def install():
 
     core = types.ModuleType("PySide6.QtCore")
     core.QTimer = type("QTimer", (Base,), {})
+    core.QObject = type("QObject", (Base,), {})
+    core.QEvent = type("QEvent", (), {"Type": type("Type", (), {"Wheel": 31, "Polish": 75})})
 
     class Qt:
         class Orientation:
