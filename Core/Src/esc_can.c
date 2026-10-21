@@ -1,4 +1,5 @@
 #include "esc_can.h"
+#include "esc_can_odrive.h"
 #include "esc_config.h"
 #include "esc_params.h"
 #include "stm32g4xx_hal.h"
@@ -237,6 +238,7 @@ void can_print(void (*pr)(const char *fmt, ...))
        (unsigned)cfg.r_torque, (unsigned)cfg.r_power, (unsigned)cfg.r_err, (unsigned)cfg.r_ext);
     pr("frames rx %lu tx %lu, dropped tx %lu rx %lu, bus-off %lu\r\n", (unsigned long)st.rx, (unsigned long)st.tx,
        (unsigned long)st.tx_drop, (unsigned long)st.rx_drop, (unsigned long)st.busoff);
+    odc_print(pr);
 }
 
 /* ------------------------------------------------------------------ main loop */
@@ -255,8 +257,9 @@ void can_task(void)
     can_frame_t f;
     while (can_recv(&f)) {
         st.last_rx_ms = HAL_GetTick();
-        /* protocol handler is added in esc_can_odrive.c */
+        odc_rx(&f);
     }
+    odc_task(HAL_GetTick());
 }
 
 #else   /* ESC_CAN_ENABLE == 0: empty build, behaviour exactly as before CAN */

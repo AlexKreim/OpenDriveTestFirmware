@@ -10,7 +10,7 @@ The firmware speaks plain text lines over the USB virtual COM port:
 EXPECTED_PARAMS_VERSION = 5
 
 STATE_NAMES = ["IDLE", "PRECHARGE", "ALIGN", "RUN", "FAULT", "CALIB"]
-FAULT_NAMES = ["none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed"]
+FAULT_NAMES = ["none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed", "estop (CAN)", "CAN timeout"]
 ST_IDLE, ST_PRECHARGE, ST_ALIGN, ST_RUN, ST_FAULT, ST_CALIB = range(6)
 RUNNING_STATES = (ST_PRECHARGE, ST_ALIGN, ST_RUN, ST_CALIB)
 

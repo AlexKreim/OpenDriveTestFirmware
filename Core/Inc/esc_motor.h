@@ -13,7 +13,8 @@ extern volatile float g_oc_last_a;
 extern volatile int g_oc_last_ph;
 extern volatile uint16_t g_oc_last_raw;
 
-typedef enum { FLT_NONE = 0, FLT_OVERCURRENT, FLT_OVERVOLT, FLT_UNDERVOLT, FLT_OVERTEMP, FLT_ENCODER, FLT_OVERSPEED } esc_fault_t;
+typedef enum { FLT_NONE = 0, FLT_OVERCURRENT, FLT_OVERVOLT, FLT_UNDERVOLT, FLT_OVERTEMP, FLT_ENCODER, FLT_OVERSPEED,
+               FLT_ESTOP, FLT_CAN_TIMEOUT } esc_fault_t;
 
 
 extern volatile float        g_vbus;        /* updated by the main loop */

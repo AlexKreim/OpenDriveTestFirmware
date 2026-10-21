@@ -458,7 +458,7 @@ static void cmd_get(const char *only)
 static void print_status(void)
 {
     static const char *sn[] = {"IDLE", "PRECHARGE", "ALIGN", "RUN", "FAULT", "CALIB"};
-    static const char *fn[] = {"none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed"};
+    static const char *fn[] = {"none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed", "estop", "CAN timeout"};
     static const char *mn[] = {"open loop", "torque (FOC)", "speed (FOC)", "position (FOC)"};
     uprintf("state %s, fault %s, Vbus %s V, Ibus %s A\r\n", sn[g_state], fn[g_fault], ff(g_vbus), ff(hw_ibus_a()));
     uprintf("last stop: %s, last MCU reset: %s, uptime %lu s\r\n", stop_reason, reset_cause, (unsigned long)(HAL_GetTick() / 1000u));
@@ -483,28 +483,42 @@ static void print_status(void)
 
 /* the calibration runs in the control interrupt; report the result as a machine readable line and store it in the parameters */
 static bool cal_active;
+static bool cal_save;                     /* write the parameters to flash after a successful calibration (CAN) */
+static int  cal_state;                    /* 0 never, 1 running, 2 ok, 3 failed */
+static const char *cal_err = "";
 
 static void cal_task(void)
 {
     if (!cal_active) return;
     int st = motor_cal_status();
     if (st == 0) {
-        if (g_state == ST_IDLE || g_state == ST_FAULT) { cal_active = false; uprintf("CAL,fail,%s\r\n", g_state == ST_FAULT ? "fault" : "aborted"); }
+        if (g_state == ST_IDLE || g_state == ST_FAULT) {
+            cal_active = false; cal_state = 3; cal_err = (g_state == ST_FAULT) ? "fault" : "aborted";
+            uprintf("CAL,fail,%s\r\n", cal_err);
+        }
         return;
     }
     cal_active = false;
+    cal_state = 3; cal_err = "unknown";
     float r, l, pp;
     int dir;
     const char *err = NULL;
-    if (!motor_cal_result(&r, &l, &dir, &pp, &err)) { uprintf("CAL,fail,%s\r\n", err ? err : "unknown"); return; }
+    if (!motor_cal_result(&r, &l, &dir, &pp, &err)) { cal_err = err ? err : "unknown"; uprintf("CAL,fail,%s\r\n", cal_err); return; }
     float r_ll = 2000.0f * r, l_ll = 2.0e6f * l;
     bool ok = params_set(&g_par, "rl", r_ll) && params_set(&g_par, "ll", l_ll) && params_set(&g_par, "encdir", (float)dir);
     float ppr = floorf(pp + 0.5f);
     if (ok && fabsf(pp - ppr) < 0.3f) ok = params_set(&g_par, "pp", ppr);
-    else if (ok) { params_derive(&g_par, g_vbus, &g_eff); uprintf("CAL,fail,pole_pairs\r\n"); return; }   /* not an integer: do not guess */
+    else if (ok) { params_derive(&g_par, g_vbus, &g_eff); cal_err = "pole_pairs"; uprintf("CAL,fail,pole_pairs\r\n"); return; }   /* not an integer: do not guess */
     params_derive(&g_par, g_vbus, &g_eff);
-    if (ok) uprintf("CAL,ok,%s,%s,%d,%s\r\n", ff(r_ll), ff(l_ll), dir, ff(pp));
-    else    uprintf("CAL,fail,%s\r\n", "range");
+    if (ok) {
+        cal_state = 2;
+        uprintf("CAL,ok,%s,%s,%d,%s\r\n", ff(r_ll), ff(l_ll), dir, ff(pp));
+        if (cal_save) {                                  /* started over CAN: keep the result over a reboot */
+            flash_res_t fr = flash_save_params(&g_par);
+            if (fr == FLASH_RES_OK) params_from_flash = true;
+            uprintf("INFO: calibration %s\r\n", fr == FLASH_RES_OK ? "written to flash" : flash_res_name(fr));
+        }
+    } else { cal_err = "range"; uprintf("CAL,fail,%s\r\n", "range"); }
 }
 
 /* gain auto-tune: result -> spdkp / spdki / poskp in RAM ('save' or the GUI stores them) */
@@ -558,6 +572,53 @@ static void scope_task(void)
     uprintf("S,%d,%s,%s,%s,%s,%s,%s,%s\r\n", scope_dump_i, ff(v[0]), ff(v[1]), ff(v[2]), ff(v[3]), ff(v[4]), ff(v[5]), ff(v[6]));
     scope_dump_i++;
 }
+
+/* ------------------------------------------------------------------ shared start / stop (USB console and CAN) */
+const char *app_start(ctl_src_t src)
+{
+    if (g_state == ST_FAULT)                                  return "fault";
+    if (g_state != ST_IDLE)                                   return "not_idle";
+    if (!g_cal_done)                                          return "no_cal";
+    if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)           return "bus_voltage";
+    if (g_mode != MODE_OPEN && g_par.enc_dir == 0)            return "no_enc_cal";
+    if (!motor_start())                                       return "refused";
+    motor_set_owner(src);
+    return NULL;
+}
+
+const char *app_calibrate(ctl_src_t src, bool save)
+{
+    if (g_state == ST_FAULT)                                  return "fault";
+    if (g_state != ST_IDLE)                                   return "not_idle";
+    if (!g_cal_done)                                          return "no_cal";
+    if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)           return "bus_voltage";
+    if (!motor_cal_start())                                   return "refused";
+    motor_set_owner(src);
+    cal_active = true; cal_save = save; cal_state = 1; cal_err = "";
+    return NULL;
+}
+
+void app_stop(const char *reason)
+{
+    if (motor_running() && reason) stop_reason = reason;
+    motor_stop();
+}
+
+void app_fault(esc_fault_t f, const char *reason)
+{
+    if (motor_running() && reason) stop_reason = reason;
+    motor_fault(f);
+}
+
+void app_clear(void)
+{
+    motor_clear_fault();
+    if (g_state == ST_IDLE) hw_as5047_reset();             /* re-initialise the encoder SPI after an encoder fault */
+}
+
+float app_temp_driver(void) { return temp_drv; }
+float app_temp_motor(void)  { return temp_mot; }
+int   app_cal_state(const char **err) { if (err) *err = cal_err; return cal_state; }
 
 static void handle_line(char *line)
 {
@@ -668,15 +729,8 @@ static void handle_line(char *line)
         }
         reply_ok();
     } else if (!strcmp(cmd, "start")) {
-        const char *why = NULL;
-        if (g_state == ST_FAULT)                                  why = "fault";
-        else if (g_state != ST_IDLE)                              why = "not_idle";
-        else if (!g_cal_done)                                     why = "no_cal";
-        else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)      why = "bus_voltage";
-        else if (g_mode != MODE_OPEN && g_par.enc_dir == 0)       why = "no_enc_cal";
-        if (why) reply_err(why);
-        else if (motor_start()) { motor_set_owner(SRC_USB); reply_ok(); }
-        else reply_err("refused");
+        const char *why = app_start(SRC_USB);
+        if (why) reply_err(why); else reply_ok();
     } else if (!strcmp(cmd, "takeover")) {
         /* the PC takes the set points from CAN (motor keeps running at the present speed / torque / position) */
         motor_takeover_usb();
@@ -725,16 +779,8 @@ static void handle_line(char *line)
         uprintf("position %s deg (%s turns)\r\n", ff(motor_pos_turns() * 360.0f), ff(motor_pos_turns()));
         reply_ok();
     } else if (!strcmp(cmd, "calibrate")) {
-        const char *why = NULL;
-        if (g_state == ST_FAULT)                               why = "fault";
-        else if (g_state != ST_IDLE)                           why = "not_idle";
-        else if (!g_cal_done)                                  why = "no_cal";
-        else if (g_vbus < VBUS_MIN_V || g_vbus > VBUS_MAX_V)   why = "bus_voltage";
-        if (!why && !motor_cal_start())                        why = "refused";
-        if (why) { reply_err(why); return; }
-        motor_set_owner(SRC_USB);
-        cal_active = true;
-        reply_ok();
+        const char *why = app_calibrate(SRC_USB, false);    /* the GUI stores the result in the preset and saves */
+        if (why) reply_err(why); else reply_ok();
     } else if (!strcmp(cmd, "tune")) {
         /* tune [bw_hz]: torque pulse test, sets spdkp / spdki / poskp for a speed-loop bandwidth of bw_hz (default 5 Hz) */
         float bw = a1 ? strtof(a1, NULL) : 5.0f;
@@ -758,7 +804,7 @@ static void handle_line(char *line)
             if (flog_clear()) reply_ok(); else reply_err("flash");
             return;
         }
-        static const char *fn[] = {"none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed"};
+        static const char *fn[] = {"none", "overcurrent", "overvoltage", "undervoltage", "overtemp", "encoder", "overspeed", "estop", "CAN timeout"};
         static const char *rn[] = {"?", "independent watchdog", "window watchdog", "software reset (HardFault?)", "low-power reset"};
         static const char *sn[] = {"IDLE", "PRECHARGE", "ALIGN", "RUN", "FAULT", "CALIB"};
         int n = flog_count();
@@ -767,7 +813,7 @@ static void handle_line(char *line)
             flog_entry_t e;
             if (!flog_get(i, &e)) break;
             const char *kind = e.kind == FLOG_FAULT ? "fault" : e.kind == FLOG_WATCHDOG ? "watchdog" : "reset";
-            const char *what = e.kind == FLOG_FAULT ? (e.code < 7u ? fn[e.code] : "?") :
+            const char *what = e.kind == FLOG_FAULT ? (e.code < 9u ? fn[e.code] : "?") :
                                e.kind == FLOG_RESET ? (e.code < 5u ? rn[e.code] : "?") :
                                (e.code == 1u ? "USB send stuck stop" : "host watchdog stop");
             uprintf("L,%d,%u,%lu,%s,%s,%s,%u,%s,%s,%s,%s,%s,%s,%s,%s\r\n", i, (unsigned)e.boot, (unsigned long)e.uptime_ms, kind, what,
@@ -870,8 +916,7 @@ static void handle_line(char *line)
         motor_stop();
         reply_ok();
     } else if (!strcmp(cmd, "clear")) {
-        motor_clear_fault();
-        if (g_state == ST_IDLE) hw_as5047_reset();         /* re-initialise the encoder SPI after an encoder fault */
+        app_clear();
         reply_ok();
     } else if (!strcmp(cmd, "bemf")) {
         hw_bemf_enable(a1 && a1[0] == '1');
