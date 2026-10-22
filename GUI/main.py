@@ -1579,6 +1579,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chk_cog.blockSignals(True)
             self.chk_cog.setChecked(True)
             self.chk_cog.blockSignals(False)
+            self.chk_cog.setEnabled(True)               # was disabled at connect when the board had no map yet
             self.cog_label.setText(txt)
             self.log_line(txt)
             self.set_status("Cogging map measured and stored.")
@@ -1587,6 +1588,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log_line("Cogging measurement failed (%s)" % r["reason"])
             self.set_status("Cogging measurement failed.")
             QtWidgets.QMessageBox.warning(self, APP_TITLE, "Cogging measurement failed: " + r["reason"])
+            self.link.send("cog")                       # the previous map (if any) was reloaded: show its state
         self.update_enabled()
 
     def on_cog_state(self, line):
