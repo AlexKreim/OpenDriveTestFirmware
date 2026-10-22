@@ -40,8 +40,8 @@
 #define CS_V_PER_A         (CS_ATTEN * CS_PGA_GAIN * CS_SHUNT_OHM)
 #define CS_SIGN            (-1.0f)  /* low-side shunt: current out of the phase gives a positive shunt voltage; -1 = positive into the motor */
 
-/* PLACEHOLDER: CC6905 sensitivity in V/A for YOUR variant (see datasheet) */
-#define CC6905_V_PER_A     0.040f
+/* CC6905 sensitivity in V/A: 40 A bidirectional 3.3 V variant = 33 mV/A (datasheet) */
+#define CC6905_V_PER_A     0.033f
 
 /* NTC parameters - change these when you calibrate (beta model) */
 #define NTC_DRV_R25        10000.0f   /* driver NTC, 10k pulldown to GND, NTC on the 3V3 side */
