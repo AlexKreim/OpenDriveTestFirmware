@@ -300,14 +300,14 @@ static void stream_task(void)
     long ang = err ? -1L : CENTI(pw >= 360.0f ? 0.0f : pw);                  /* 0.01 deg, 0..360 */
     bool spv;
     float psp = motor_pos_sp_turns(&spv) * 360.0f;
-    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d\r\n",
+    uprintf("T,%lu,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%d,%ld\r\n",
             (unsigned long)now, (int)g_state, (int)g_fault, MILLI(g_vbus),
             MILLI(g_i[0]), MILLI(g_i[1]), MILLI(g_i[2]),
             CENTI(g_rpm_cmd), CENTI(rpm_spi), CENTI(g_rpm_meas), ang,
             (long)(temp_drv * 10.0f), (long)(temp_mot * 10.0f), MILLI(g_v_ll),
             (int)g_mode, MILLI(g_id * 1.0f), MILLI(g_iq * 1.0f), MILLI(g_imag), MILLI(g_iq_ref),
             (g_pos_sp < 0.0f) ? -1L : CENTI(g_pos_sp), MILLI(g_vd), MILLI(g_vq), CENTI(pu), spv ? CENTI(psp) : -2147483647L,
-            (int)motor_owner());
+            (int)motor_owner(), MILLI(hw_ibus_a()));                        /* field 26: bus current (CC6905), mA */
 }
 
 /* ------------------------------------------------------------------ tests */

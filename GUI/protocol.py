@@ -26,8 +26,8 @@ TELEM_FIELDS = ["ms", "state", "fault", "vbus_mv", "ia_ma", "ib_ma", "ic_ma",
 
 # optional fields appended by newer firmware (older firmware sends only the 22 above):
 #   <multi-turn position x100 deg, user frame>,<position-mode profile set point x100 deg, -2147483647 = none>,
-#   <control owner: 0 none, 1 USB, 2 CAN>
-TELEM_EXTRA = ["pos_mt_c", "possp_mt_c", "owner"]
+#   <control owner: 0 none, 1 USB, 2 CAN>,<bus current mA (CC6905)>
+TELEM_EXTRA = ["pos_mt_c", "possp_mt_c", "owner", "ibus_ma"]
 OWNER_NAMES = ["none", "USB", "CAN"]
 
 CSV_COLUMNS = ["t_s", "state", "fault", "vbus_V", "ia_A", "ib_A", "ic_A", "rpm_cmd", "rpm_spi",
@@ -70,7 +70,8 @@ def parse_telemetry(line):
         "vq": v["vq_mv"] / 1000.0,
         "pos_mt": (v["pos_mt_c"] / 100.0) if "pos_mt_c" in v else None,
         "possp_mt": (v["possp_mt_c"] / 100.0) if ("possp_mt_c" in v and v["possp_mt_c"] != -2147483647) else None,
-        "owner": v.get("owner")
+        "owner": v.get("owner"),
+        "ibus": (v["ibus_ma"] / 1000.0) if "ibus_ma" in v else None
     }
 
 

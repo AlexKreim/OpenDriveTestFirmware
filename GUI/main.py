@@ -877,7 +877,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         grid = QtWidgets.QGridLayout()
         self.ro = {}
-        items = [("state", "State"), ("fault", "Fault"), ("vbus", "Bus voltage"), ("vll", "Applied V (L-L)"),
+        items = [("state", "State"), ("fault", "Fault"), ("vbus", "Bus voltage"), ("ibus", "Bus current"), ("vll", "Applied V (L-L)"),
                  ("imag", "Phase current |I|"), ("id", "Id (flux)"), ("iq", "Iq (torque)"),
                  ("ia", "Phase A"), ("ib", "Phase B"), ("ic", "Phase C"),
                  ("rpm_cmd", "Speed cmd"), ("rpm_spi", "Speed (SPI)"), ("angle", "Angle"),
@@ -2056,6 +2056,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ro["state"].setText(P.STATE_NAMES[s["state"]] if s["state"] < len(P.STATE_NAMES) else "?")
             self.ro["fault"].setText(P.FAULT_NAMES[s["fault"]] if s["fault"] < len(P.FAULT_NAMES) else "?")
             self.ro["vbus"].setText("%.2f V" % s["vbus"])
+            self.ro["ibus"].setText("---" if s.get("ibus") is None else "%.2f A" % s["ibus"])
             self.ro["vll"].setText("%.2f V" % s["vll"])
             for k in ("ia", "ib", "ic"):
                 self.ro[k].setText("%.2f A" % s[k])
