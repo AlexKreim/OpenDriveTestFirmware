@@ -2,7 +2,7 @@
 
 Custom BLDC ESC: firmware for an STM32G474 board (this repo root is the STM32CubeIDE project: `.ioc`, `Core/`, `Drivers/`, ...)
 plus the Python/PySide6 PC program "ESC Control" in `GUI/`. The user guide (setup, commands, parameters, troubleshooting)
-is `README.md` (same file in `GUI/`). Keep both copies identical when you edit it.
+is `README.md` in the repo root.
 
 ---------------------------------------------------------------------------------------------------------------------------
 
@@ -138,6 +138,7 @@ Floats are printed with `%ld` on scaled integers (newlib-nano has no `%lld` / fl
 - GUI telemetry timeout (`send_ping`): no telemetry 1 s while running -> `stop` and no more pings until telemetry returns.
 - `WheelGuard` (app-wide event filter in `main()`): the mouse wheel changes spin/combo/slider/dial only when focused; otherwise
   it scrolls the page (scroll bars are excluded from the guard).
+- Tuning tab: *Save map as CSV...* reads `cog dump` (event `cogmap` in `link.py`) and writes bin, angle, mA to a file.
 - Crash/hang log `%APPDATA%\ESC_Control\crash.log` (`install_crash_log`): exceptions, hard crashes (faulthandler) and GUI-thread
   hangs > 5 s with all thread stacks. Ask the owner for it after a GUI freeze.
 - Torque mode starts at 0 by design (the set point is reset at start/stop).
@@ -199,4 +200,4 @@ motor, so re-check on the 2212 before trusting or fixing the method.
    bring-up wizard, offset sanity check at start, field weakening.
 5. Hardware: more bus capacitance, low-side FET heating, eventually a 40 A capable board.
 6. Dev PC has no host gcc (FOC sim and GUI tests not run); `pacman -S mingw-w64-ucrt-x86_64-gcc` in MSYS2. GUI venv: `GUI/.venv`.
-   Only `GUI/README.md` exists (no root copy).
+   The user guide is the root `README.md` only (no copy in `GUI/`).

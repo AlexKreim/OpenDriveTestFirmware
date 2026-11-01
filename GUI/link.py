@@ -28,6 +28,7 @@ class EscLink:
          ("faultlog", dict)             complete "faultlog": {boot, flash, entries [dict per L line]}
          ("cancfg", dict)               reply to "canget": CAN settings and bus state
          ("tune", dict)                 result of "tune": {ok, j_gcm2, tf_mnm, spdkp, spdki, poskp, bw} or {ok False, reason}
+         ("cogmap", dict)               complete "cog dump": {count (expected), counts_per_bin, rows [(bin, mA), ...]}
          ("cog", dict)                  result of "cog run": {ok, pp_ma, rms_ma, fric_mnm, flash} or {ok False, reason}
          ("log", text)                  any other line from the board
          ("disconnected", text)         the port went away
@@ -45,6 +46,7 @@ class EscLink:
         self._params = {}
         self._scope = None                       # (dt, rows) while a scope dump arrives
         self._flog = None                        # fault log while its lines arrive
+        self._cogmap = None                      # anti-cogging map while its lines arrive
 
     @staticmethod
     def _default_factory(port):
@@ -214,6 +216,22 @@ class EscLink:
                     return
                 except ValueError:
                     pass
+            self.events.put(("log", line))
+            return
+        if line.startswith("G,"):
+            f = line.split(",")
+            try:
+                if f[1] == "count" and len(f) >= 4:
+                    self._cogmap = {"count": int(f[2]), "counts_per_bin": int(f[3]), "rows": []}
+                elif f[1] == "end":
+                    if self._cogmap is not None:
+                        self.events.put(("cogmap", self._cogmap))
+                    self._cogmap = None
+                elif self._cogmap is not None and len(f) >= 3:
+                    self._cogmap["rows"].append((int(f[1]), int(f[2])))
+                return
+            except (ValueError, IndexError):
+                pass
             self.events.put(("log", line))
             return
         if line.startswith("COG,"):

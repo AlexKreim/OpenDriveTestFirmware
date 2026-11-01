@@ -276,7 +276,7 @@ own flash area (0x0807A000), then used as Iq feed-forward in **speed and positio
 encoder angle every control cycle. Result `COG,ok,<peak-peak mA>,<rms mA>,<friction mNm>,<flash result>` or `COG,fail,<reason>`
 (`not_following`: position error > 20°; `coverage`: < 90 % of the bins seen). `cog` shows the state, `cog on|off` switches it
 (RAM), `cog save` stores the map with the on/off state, `cog clear` removes it (RAM, then `cog save`), `cog dump` prints
-`G,<bin>,<mA>`. The map belongs to the motor and its magnet mounting: measure again after changing either. Encoder angle errors
+`G,<bin>,<mA>` (*Save map as CSV...* in the Tuning tab writes it to a file: bin, sensor angle, feed-forward in mA). The map belongs to the motor and its magnet mounting: measure again after changing either. Encoder angle errors
 (weak magnet) end up in the map as well. *Not tested on hardware yet.*
 
 The **scope** (Tuning tab, `scope [div]`) records 1000 samples of the FOC loops inside the firmware at 2 kHz / `div`

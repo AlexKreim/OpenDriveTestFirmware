@@ -611,6 +611,10 @@ class MainWindow(QtWidgets.QMainWindow):
         b = QtWidgets.QPushButton("Save on/off to board")
         b.clicked.connect(lambda _=False: self.link.send("cog save") if self.connected() else None)
         row.addWidget(b)
+        b = QtWidgets.QPushButton("Save map as CSV...")
+        b.setToolTip("Reads the map from the board (4096 points) and writes it to a CSV file on this PC.")
+        b.clicked.connect(lambda _=False: self.on_cog_save_csv())
+        row.addWidget(b)
         row.addStretch(1)
         gl.addLayout(row)
         self.cog_label = QtWidgets.QLabel("")
@@ -1572,6 +1576,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cog_label.setText("Measuring the cogging map... (about %d s)" % (2 * sec + 5))
         self.set_status("Cogging measurement running...")
 
+    def on_cog_save_csv(self):
+        if not self.connected():
+            return
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save cogging map", time.strftime("cog_map_%Y%m%d_%H%M%S.csv"), "CSV (*.csv)")
+        if not fn:
+            return
+        self.cog_csv_path = fn
+        self.cog_label.setText("Reading the cogging map from the board...")
+        self.link.send("cog dump")
+
+    def on_cog_map(self, m):
+        path = getattr(self, "cog_csv_path", None)
+        self.cog_csv_path = None
+        if not path:
+            return
+        rows = m["rows"]
+        deg = m["counts_per_bin"] * 360.0 / 16384.0
+        with open(path, "w", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(["bin", "sensor_angle_deg", "iq_ff_mA"])
+            for i, ma in rows:
+                wr.writerow([i, "%.3f" % (i * deg), ma])
+        txt = "Cogging map saved: %d of %d points in %s" % (len(rows), m["count"], path)
+        if len(rows) != m["count"]:
+            txt += " (INCOMPLETE: lines were lost on USB, read it again)"
+        self.cog_label.setText(txt)
+        self.log_line(txt)
+
     def on_cog_result(self, r):
         if r["ok"]:
             txt = ("Cogging map: %.0f mA peak-peak, %.0f mA rms; friction %.1f mNm. Compensation on, flash: %s."
@@ -1872,6 +1904,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.on_scope_state(ev[1], ev[2])
             elif kind == "scope":
                 self.on_scope_data(ev[1])
+            elif kind == "cogmap":
+                self.on_cog_map(ev[1])
             elif kind == "cog":
                 self.on_cog_result(ev[1])
             elif kind == "log":
